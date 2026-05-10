@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Green Shield Guardian</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(circle at top, #223b27 0%, #101820 58%, #0a0f14 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Trebuchet MS", Arial, sans-serif;
+    overflow: hidden;
+  }
+  #gameCanvas {
+    display: block;
+    width: min(1200px, 100vw);
+    height: auto;
+    border: 2px solid #385240;
+    box-shadow: 0 26px 80px rgba(0, 0, 0, 0.45);
+    background: #101010;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="1200" height="650"></canvas>
+
+<img id="mapBg" src="assets/images/map_background_concept_c_v1.png" style="display:none" alt="">
+<img id="factoryCleanBg" src="assets/images/factory_clean_v1.png" style="display:none" alt="">
+<img id="coreSprite" src="assets/images/core_pure.png" style="display:none" alt="">
+<img id="treeSprite" src="assets/images/tree_sanctuary.png" style="display:none" alt="">
+
+<img id="heroSwordIdle" src="assets/images/guardian_sword_idle.png" style="display:none" alt="">
+<img id="heroSwordAttack" src="assets/images/guardian_sword_attack.png" style="display:none" alt="">
+<img id="heroSwordMove1" src="assets/images/guardian_sword_move.png" style="display:none" alt="">
+<img id="heroSwordMove2" src="assets/images/guardian_sword_move2.png" style="display:none" alt="">
+<img id="heroSwordMove3" src="assets/images/guardian_sword_move3.png" style="display:none" alt="">
+<img id="heroSwordMove4" src="assets/images/guardian_sword_move4.png" style="display:none" alt="">
+
+<img id="heroFireIdle" src="assets/images/guardian_firesword_idle.png" style="display:none" alt="">
+<img id="heroFireAttack" src="assets/images/guardian_firesword_attack.png" style="display:none" alt="">
+<img id="heroFireMove1" src="assets/images/guardian_firesword_move.png" style="display:none" alt="">
+<img id="heroFireMove2" src="assets/images/guardian_firesword_move2.png" style="display:none" alt="">
+<img id="heroFireMove3" src="assets/images/guardian_firesword_move3.png" style="display:none" alt="">
+<img id="heroFireMove4" src="assets/images/guardian_firesword_move4.png" style="display:none" alt="">
+
+<img id="heroIceIdle" src="assets/images/guardian_icesword_idle.png" style="display:none" alt="">
+<img id="heroIceAttack" src="assets/images/guardian_icesword_attack.png" style="display:none" alt="">
+<img id="heroIceMove1" src="assets/images/guardian_icesword_move.png" style="display:none" alt="">
+<img id="heroIceMove2" src="assets/images/guardian_icesword_move2.png" style="display:none" alt="">
+<img id="heroIceMove3" src="assets/images/guardian_icesword_move3.png" style="display:none" alt="">
+<img id="heroIceMove4" src="assets/images/guardian_icesword_move4.png" style="display:none" alt="">
+
+<img id="heroStaffIdle" src="assets/images/guardian_staff_idle.png" style="display:none" alt="">
+<img id="heroStaffAttack" src="assets/images/guardian_staff_attack.png" style="display:none" alt="">
+<img id="heroStaffMove1" src="assets/images/guardian_staff_move.png" style="display:none" alt="">
+<img id="heroStaffMove2" src="assets/images/guardian_staff_move2.png" style="display:none" alt="">
+<img id="heroStaffMove3" src="assets/images/guardian_staff_move3.png" style="display:none" alt="">
+<img id="heroStaffMove4" src="assets/images/guardian_staff_move4.png" style="display:none" alt="">
+
+<img id="heroUltAttack" src="assets/images/guardian_apocalypse_attack.png" style="display:none" alt="">
+
+<img id="enemyTwister" src="assets/images/enemy_twister.png" style="display:none" alt="">
+<img id="enemyGoat" src="assets/images/enemy_goat.png" style="display:none" alt="">
+<img id="enemySkull" src="assets/images/enemy_skull.png" style="display:none" alt="">
+<img id="enemyMiniIdle" src="assets/images/enemy_miniboss.png" style="display:none" alt="">
+<img id="enemyMini1" src="assets/images/enemy_miniboss_walk1.png" style="display:none" alt="">
+<img id="enemyMini2" src="assets/images/enemy_miniboss_walk2.png" style="display:none" alt="">
+<img id="enemyMini3" src="assets/images/enemy_miniboss_walk3.png" style="display:none" alt="">
+<img id="enemyMini4" src="assets/images/enemy_miniboss_walk4.png" style="display:none" alt="">
+<img id="enemyBossIdle" src="assets/images/enemy_boss.png" style="display:none" alt="">
+<img id="enemyBoss1" src="assets/images/enemy_boss_walk1.png" style="display:none" alt="">
+<img id="enemyBoss2" src="assets/images/enemy_boss_walk2.png" style="display:none" alt="">
+<img id="enemyBoss3" src="assets/images/enemy_boss_walk3.png" style="display:none" alt="">
+<img id="enemyBoss4" src="assets/images/enemy_boss_walk4.png" style="display:none" alt="">
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const CONFIG = {
+  width: 1200,
+  height: 650,
+  sanctuaryEdge: 430,
+  slopeStart: 700,
+  core: { x: 170, y: 245, radius: 34, maxHp: 500 },
+  hero: { x: 215, y: 370, speed: 225, maxHp: 220, lives: 3, respawn: 3, attackCd: 0.55, plantCd: 2.8, ultCd: 10 },
+  breakDuration: 7,
+  waves: [
+    { twister: 6, goat: 2, skull: 0, miniboss: 0, boss: 0 },
+    { twister: 4, goat: 4, skull: 3, miniboss: 1, boss: 0 },
+    { twister: 0, goat: 5, skull: 5, miniboss: 1, boss: 1 }
+  ],
+  enemy: {
+    twister: { hp: 65, speed: 58, damage: 10, reward: 10, radius: 18, range: 34, attackCd: 0.9 },
+    goat: { hp: 110, speed: 42, damage: 15, reward: 18, radius: 22, range: 38, attackCd: 1.05 },
+    skull: { hp: 58, speed: 34, damage: 7, reward: 15, radius: 18, range: 140, attackCd: 1.5 },
+    miniboss: { hp: 420, speed: 30, damage: 22, reward: 120, radius: 28, range: 48, attackCd: 1.2 },
+    boss: { hp: 1600, speed: 25, damage: 28, reward: 300, radius: 42, range: 56, attackCd: 1.15 }
+  },
+  weapons: {
+    sword: { name: 'Steel Sword', dmg: 26, unlockCost: 0, meleeRange: 84, slash: '#e9f5ff' },
+    firesword: { name: 'Flame Greatsword', dmg: 40, unlockCost: 150, meleeRange: 92, slash: '#ff8f40', burn: 12 },
+    icesword: { name: 'Frost Greatsword', dmg: 34, unlockCost: 200, meleeRange: 92, slash: '#9ddfff', slow: 0.5 },
+    staff: { name: 'Dual Arc Staff', dmg: 28, unlockCost: 300, projectile: true, slash: '#ff71ff', burn: 8, slow: 0.3 }
+  },
+  grid: { cell: 58, startX: 80, startY: 138, cols: 17, rows: 7 },
+  visual: {
+    coreScale: 0.108,
+    treeScale: { sanctuary: 0.108, enemy: 0.094 },
+    heroScale: { sword: 0.205, firesword: 0.208, icesword: 0.208, staff: 0.214, ultimate: 0.22 },
+    enemyScale: { twister: 0.178, goat: 0.196, skull: 0.188, miniboss: 0.248, boss: 0.314 },
+    heroShadow: { rx: 26, ry: 10 },
+    treeShadow: { rx: 18, ry: 7 },
+    enemyShadow: {
+      twister: { rx: 24, ry: 9 },
+      goat: { rx: 28, ry: 10 },
+      skull: { rx: 24, ry: 9 },
+      miniboss: { rx: 38, ry: 12 },
+      boss: { rx: 56, ry: 17 }
+    },
+    bob: { hero: 1.1, twister: 0.22, goat: 0.26, skull: 0.18, miniboss: 0.34, boss: 0.42 },
+    startScale: { hero: 0.4, boss: 0.5 }
+  }
+};
+
+const images = {
+  map: document.getElementById('mapBg'),
+  cleanFactory: document.getElementById('factoryCleanBg'),
+  core: document.getElementById('coreSprite'),
+  tree: document.getElementById('treeSprite'),
+  hero: {
+    sword: {
+      idle: document.getElementById('heroSwordIdle'),
+      attack: document.getElementById('heroSwordAttack'),
+      move: [document.getElementById('heroSwordMove1'), document.getElementById('heroSwordMove2'), document.getElementById('heroSwordMove3'), document.getElementById('heroSwordMove4')]
+    },
+    firesword: {
+      idle: document.getElementById('heroFireIdle'),
+      attack: document.getElementById('heroFireAttack'),
+      move: [document.getElementById('heroFireMove1'), document.getElementById('heroFireMove2'), document.getElementById('heroFireMove3'), document.getElementById('heroFireMove4')]
+    },
+    icesword: {
+      idle: document.getElementById('heroIceIdle'),
+      attack: document.getElementById('heroIceAttack'),
+      move: [document.getElementById('heroIceMove1'), document.getElementById('heroIceMove2'), document.getElementById('heroIceMove3'), document.getElementById('heroIceMove4')]
+    },
+    staff: {
+      idle: document.getElementById('heroStaffIdle'),
+      attack: document.getElementById('heroStaffAttack'),
+      move: [document.getElementById('heroStaffMove1'), document.getElementById('heroStaffMove2'), document.getElementById('heroStaffMove3'), document.getElementById('heroStaffMove4')]
+    },
+    ultimate: document.getElementById('heroUltAttack')
+  },
+  enemy: {
+    twister: document.getElementById('enemyTwister'),
+    goat: document.getElementById('enemyGoat'),
+    skull: document.getElementById('enemySkull'),
+    minibossIdle: document.getElementById('enemyMiniIdle'),
+    miniboss: [document.getElementById('enemyMini1'), document.getElementById('enemyMini2'), document.getElementById('enemyMini3'), document.getElementById('enemyMini4')],
+    bossIdle: document.getElementById('enemyBossIdle'),
+    boss: [document.getElementById('enemyBoss1'), document.getElementById('enemyBoss2'), document.getElementById('enemyBoss3'), document.getElementById('enemyBoss4')]
+  }
+};
+
+const audioFiles = {
+  bgm: 'assets/audio/bgm_sanctuary_loop.wav',
+  plant: 'assets/audio/sfx_plant.wav',
+  skill: 'assets/audio/sfx_skill.wav',
+  ultimate: 'assets/audio/sfx_ultimate.wav',
+  heroHit: 'assets/audio/sfx_hero_hit.wav',
+  enemyHit: 'assets/audio/sfx_enemy_hit.wav',
+  enemyDown: 'assets/audio/sfx_enemy_down.wav',
+  coreHit: 'assets/audio/sfx_core_hit.wav',
+  coin: 'assets/audio/sfx_coin.wav',
+  spawn: 'assets/audio/sfx_spawn.wav',
+  victory: 'assets/audio/stinger_victory.wav',
+  gameover: 'assets/audio/stinger_gameover.wav'
+};
+
+const state = {
+  phase: 'start',
+  hero: null,
+  core: { hp: CONFIG.core.maxHp },
+  trees: [],
+  enemies: [],
+  projectiles: [],
+  particles: [],
+  messages: [],
+  ownedWeapons: ['sword'],
+  currentWeapon: 'sword',
+  coins: 50,
+  kills: 0,
+  waveIndex: -1,
+  waveState: 'idle',
+  waveTimer: CONFIG.breakDuration,
+  waveQueue: [],
+  pollutions: [],
+  breakPlantHint: false,
+  victoryTimer: 0,
+  cleanReveal: 0,
+  gameOverTip: '',
+  stats: { co2: 0, toxin: 0 },
+  shopOpen: false,
+  muted: false,
+  audioUnlocked: false,
+  hitStop: 0,
+  shake: 0,
+  slashes: [],
+  waveIntro: 0,
+  treeTier: 1,
+  shopButtonRect: { x: 322, y: 590, w: 94, h: 40 }
+};
+
+const keys = {};
+let lastTime = 0;
+
+const sound = {
+  pool: {},
+  init() {
+    for (const [key, src] of Object.entries(audioFiles)) {
+      const a = new Audio(src);
+      a.preload = 'auto';
+      if (key === 'bgm') {
+        a.loop = true;
+        a.volume = 0.22;
+      } else {
+        a.volume = 0.6;
+      }
+      this.pool[key] = a;
+    }
+  },
+  unlock() {
+    if (state.audioUnlocked) return;
+    state.audioUnlocked = true;
+    this.playMusic();
+  },
+  playMusic() {
+    if (state.muted) return;
+    const bgm = this.pool.bgm;
+    if (bgm.paused) bgm.play().catch(() => {});
+  },
+  stopMusic() {
+    this.pool.bgm.pause();
+    this.pool.bgm.currentTime = 0;
+  },
+  play(key) {
+    if (state.muted) return;
+    const base = this.pool[key];
+    if (!base) return;
+    try {
+      const a = base.cloneNode();
+      a.volume = base.volume;
+      a.play().catch(() => {});
+    } catch (err) {
+      // ignore
+    }
+  },
+  toggle() {
+    state.muted = !state.muted;
+    if (state.muted) this.pool.bgm.pause();
+    else this.playMusic();
+  }
+};
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
+function imageReady(img) { return !!(img && img.complete && img.naturalWidth > 0); }
+
+function addMessage(text, color = '#ffffff', ttl = 1.5) {
+  state.messages.push({ text, color, ttl, y: 108 });
+}
+
+function emitBurst(x, y, color, count = 12, speed = 120, size = 4) {
+  for (let i = 0; i < count; i++) {
+    const a = rand(0, Math.PI * 2);
+    const s = rand(speed * 0.4, speed);
+    state.particles.push({
+      x, y,
+      vx: Math.cos(a) * s,
+      vy: Math.sin(a) * s,
+      ttl: rand(0.35, 0.85),
+      size: rand(size * 0.5, size),
+      color
+    });
+  }
+}
+
+function emitRing(x, y, color, radius, ttl = 0.3) {
+  state.particles.push({ x, y, ring: true, radius, maxRadius: radius, ttl, color });
+}
+
+function emitSlash(x, y, facing, color, size = 86) {
+  state.slashes.push({
+    x,
+    y,
+    facing,
+    color,
+    ttl: 0.16,
+    size,
+    arc: Math.PI * 0.92
+  });
+}
+
+function punch(amount = 0.08, stop = 0.035) {
+  state.shake = Math.max(state.shake, amount);
+  state.hitStop = Math.max(state.hitStop, stop);
+}
+
+function emitLeaf(x, y) {
+  emitBurst(x, y, '#89ff8d', 10, 80, 5);
+}
+
+function gridCellCenter(col, row) {
+  return {
+    x: CONFIG.grid.startX + col * CONFIG.grid.cell,
+    y: CONFIG.grid.startY + row * CONFIG.grid.cell
+  };
+}
+
+function nearestGridCell(x, y) {
+  let best = null;
+  let bestD = Infinity;
+  for (let row = 0; row < CONFIG.grid.rows; row++) {
+    for (let col = 0; col < CONFIG.grid.cols; col++) {
+      const c = gridCellCenter(col, row);
+      const d = dist(x, y, c.x, c.y);
+      if (d < bestD) {
+        bestD = d;
+        best = { col, row, x: c.x, y: c.y };
+      }
+    }
+  }
+  return best;
+}
+
+function treeTierSpec(tier) {
+  if (tier >= 3) return { hpSanctuary: 170, hpEnemy: 120, absorb: 2.0, heal: 1.5 };
+  if (tier === 2) return { hpSanctuary: 128, hpEnemy: 90, absorb: 1.5, heal: 1.2 };
+  return { hpSanctuary: 85, hpEnemy: 60, absorb: 1.0, heal: 1.0 };
+}
+
+function createTree(x, y, zone = 'sanctuary') {
+  const cell = nearestGridCell(x, y);
+  if (!cell) return null;
+  const occupied = state.trees.some(t => !t.dead && t.col === cell.col && t.row === cell.row);
+  if (occupied) return null;
+  const spec = treeTierSpec(state.treeTier);
+  const baseHp = zone === 'enemy' ? spec.hpEnemy : spec.hpSanctuary;
+  const tree = {
+    x: cell.x,
+    y: cell.y,
+    col: cell.col,
+    row: cell.row,
+    zone,
+    hp: baseHp,
+    maxHp: baseHp,
+    absorb: spec.absorb,
+    heal: spec.heal,
+    sway: rand(0, Math.PI * 2),
+    dead: false
+  };
+  state.trees.push(tree);
+  return tree;
+}
+
+function applyTreeTier(tier) {
+  state.treeTier = clamp(tier, 1, 3);
+  const spec = treeTierSpec(state.treeTier);
+  for (const tree of state.trees) {
+    const nextHp = tree.zone === 'enemy' ? spec.hpEnemy : spec.hpSanctuary;
+    const ratio = tree.maxHp > 0 ? tree.hp / tree.maxHp : 1;
+    tree.maxHp = nextHp;
+    tree.hp = clamp(nextHp * ratio, 1, nextHp);
+    tree.absorb = spec.absorb;
+    tree.heal = spec.heal;
+  }
+}
+
+function hasAffordableShopItem() {
+  const weaponIds = ['firesword', 'icesword', 'staff'];
+  for (const id of weaponIds) {
+  const weapon = CONFIG.weapons[id];
+    if (!state.ownedWeapons.includes(id) && state.coins >= weapon.unlockCost) return true;
+  }
+  if (state.treeTier < 2 && state.coins >= 100) return true;
+  if (state.treeTier < 3 && state.coins >= 200) return true;
+  return false;
+}
+
+function seedInitialTrees() {
+  state.trees = [];
+  [
+    [2, 1], [3, 2], [2, 4], [4, 3], [5, 1], [5, 5]
+  ].forEach(([col, row]) => {
+    const c = gridCellCenter(col, row);
+    createTree(c.x, c.y, 'sanctuary');
+  });
+}
+
+function spawnPollutionPatches() {
+  state.pollutions = [];
+  for (let i = 0; i < 42; i++) {
+    state.pollutions.push({
+      x: rand(CONFIG.slopeStart - 40, CONFIG.width - 30),
+      y: rand(110, 625),
+      toxin: rand(0.25, 0.9),
+      radius: rand(24, 48)
+    });
+  }
+}
+
+function resetGame() {
+  state.hero = {
+    x: CONFIG.hero.x,
+    y: CONFIG.hero.y,
+    hp: CONFIG.hero.maxHp,
+    maxHp: CONFIG.hero.maxHp,
+    lives: CONFIG.hero.lives,
+    isDown: false,
+    respawnTimer: 0,
+    invuln: 0,
+    attackCd: 0,
+    plantCd: 0,
+    ultCd: 0,
+    facing: 1,
+    walkTime: 0,
+    attackTime: 0,
+    ultTime: 0
+  };
+  state.core.hp = CONFIG.core.maxHp;
+  state.enemies = [];
+  state.projectiles = [];
+  state.particles = [];
+  state.messages = [];
+  state.slashes = [];
+  state.waveIndex = -1;
+  state.waveState = 'break';
+  state.waveTimer = 2.2;
+  state.waveQueue = [];
+  state.breakPlantHint = true;
+  state.victoryTimer = 0;
+  state.cleanReveal = 0;
+  state.gameOverTip = '';
+  state.currentWeapon = 'sword';
+  state.ownedWeapons = ['sword'];
+  state.coins = 50;
+  state.kills = 0;
+  state.waveIntro = 0;
+  state.treeTier = 1;
+  state.stats.co2 = 0;
+  state.stats.toxin = 0;
+  state.shopOpen = false;
+  seedInitialTrees();
+  spawnPollutionPatches();
+}
+
+function openNextWave() {
+  state.waveIndex += 1;
+  if (state.waveIndex >= CONFIG.waves.length) {
+    state.waveState = 'victoryCheck';
+    return;
+  }
+  state.waveState = 'fighting';
+  state.breakPlantHint = false;
+  state.waveIntro = 1.6;
+  const wave = CONFIG.waves[state.waveIndex];
+  state.waveQueue = [];
+  for (const [type, count] of Object.entries(wave)) {
+    for (let i = 0; i < count; i++) state.waveQueue.push(type);
+  }
+  state.waveQueue.sort(() => Math.random() - 0.5);
+  state.waveSpawnGap = 0.8;
+  state.waveSpawnTimer = 1.25;
+  if (state.waveIndex >= 1) punch(0.22, 0.018);
+  addMessage(`Wave ${state.waveIndex + 1} begins`, '#fff1a1', 1.8);
+  sound.play('spawn');
+  if (state.waveIndex === 2) {
+    if (!state.ownedWeapons.includes('firesword')) state.ownedWeapons.push('firesword');
+    state.currentWeapon = 'firesword';
+    addMessage('Flame Greatsword equipped for Wave 3', '#ff9d4f', 2.2);
+  }
+}
+
+function spawnEnemy(type) {
+  const options = [
+    { x: 1135, y: 282, kind: 'factory' },
+    { x: 1040, y: 396, kind: 'factory' },
+    { x: 1084, y: 470, kind: 'drain' },
+    { x: 1128, y: 518, kind: 'drain' }
+  ];
+  const point = options[Math.floor(Math.random() * options.length)];
+  const cfg = CONFIG.enemy[type];
+  state.enemies.push({
+    type,
+    x: point.x + rand(-10, 10),
+    y: point.y + rand(-10, 10),
+    hp: cfg.hp,
+    maxHp: cfg.hp,
+    speed: cfg.speed,
+    damage: cfg.damage,
+    reward: cfg.reward,
+    radius: cfg.radius,
+    range: cfg.range,
+    attackCd: 0,
+    gait: rand(0, Math.PI * 2),
+    burn: 0,
+    slow: 0,
+    dead: false,
+    poisonTimer: 0
+  });
+  emitBurst(point.x, point.y, point.kind === 'drain' ? '#7cff6e' : '#d087ff', 14, 70, 5);
+  sound.play('spawn');
+}
+
+function damageHero(amount) {
+  const hero = state.hero;
+  if (hero.isDown || hero.invuln > 0) return;
+  hero.hp = Math.max(0, hero.hp - amount);
+  hero.invuln = 0.45;
+  punch(0.1, 0.02);
+  emitBurst(hero.x, hero.y - 20, '#ffd4d4', 8, 80, 4);
+  emitRing(hero.x, hero.y - 56, '#ff9e9e', 26, 0.14);
+  sound.play('heroHit');
+  if (hero.hp <= 0) {
+    hero.isDown = true;
+    hero.respawnTimer = CONFIG.hero.respawn;
+    hero.lives -= 1;
+    addMessage(hero.lives > 0 ? 'Hero down. Respawn in 3s' : 'No lives left', '#ff9a9a', 2);
+  }
+}
+
+function damageCore(amount) {
+  state.core.hp = Math.max(0, state.core.hp - amount);
+  punch(0.14, 0.04);
+  emitBurst(CONFIG.core.x, CONFIG.core.y - 8, '#9fffd8', 10, 95, 5);
+  emitRing(CONFIG.core.x, CONFIG.core.y, '#9fffd8', 54, 0.18);
+  sound.play('coreHit');
+  if (state.core.hp <= 0) {
+    state.gameOverTip = 'The Pure Core has been consumed by pollution.';
+    state.phase = 'gameover';
+    sound.play('gameover');
+  }
+}
+
+function damageEnemy(enemy, amount, effect = null, quiet = false) {
+  if (enemy.dead) return;
+  enemy.hp = Math.max(0, enemy.hp - amount);
+  if (!quiet) {
+    enemy.hitFlash = 0.06;
+    enemy.hitSquash = Math.min(0.03, 0.012 + amount / 2200);
+  }
+  if (effect) {
+    if (effect.burn) enemy.burn = Math.max(enemy.burn, 2.8);
+    if (effect.slow) enemy.slow = Math.max(enemy.slow, 2.2);
+  }
+  if (!quiet) {
+    punch(amount > 120 ? 0.035 : 0.02, amount > 120 ? 0.01 : 0.006);
+    emitBurst(enemy.x, enemy.y - enemy.radius * 0.5, '#ffffff', amount > 60 ? 4 : 3, 42, 2.1);
+    sound.play('enemyHit');
+  }
+  if (enemy.hp <= 0) {
+    enemy.dead = true;
+    state.coins += enemy.reward;
+    state.kills += 1;
+    if (!quiet || enemy.type === 'boss' || enemy.type === 'miniboss') {
+      emitBurst(enemy.x, enemy.y, enemy.type === 'boss' ? '#b67cff' : '#ffd48f', enemy.type === 'boss' ? 14 : 7, 92, enemy.type === 'boss' ? 5 : 3);
+      emitRing(enemy.x, enemy.y, enemy.type === 'boss' ? '#c08bff' : '#ffc86a', enemy.type === 'boss' ? 80 : 34, 0.26);
+    }
+    if (!quiet || enemy.type === 'boss' || enemy.type === 'miniboss') sound.play('enemyDown');
+    if (!quiet) sound.play('coin');
+  }
+}
+
+function heroAttack() {
+  const hero = state.hero;
+  if (hero.isDown || hero.attackCd > 0) return;
+  const weapon = CONFIG.weapons[state.currentWeapon];
+  hero.attackCd = CONFIG.hero.attackCd;
+  hero.attackTime = 0.22;
+  sound.play('skill');
+  emitBurst(hero.x + hero.facing * 44, hero.y - 70, weapon.slash, 4, 56, 2.6);
+  emitSlash(hero.x + hero.facing * 42, hero.y - 70, hero.facing, weapon.slash, 60);
+  for (const enemy of state.enemies) {
+    if (enemy.dead) continue;
+    const reach = weapon.meleeRange + enemy.radius + 10;
+    if (dist(hero.x + hero.facing * 18, hero.y - 70, enemy.x, enemy.y - enemy.radius * 0.5) <= reach) {
+      damageEnemy(enemy, weapon.dmg, weapon);
+    }
+  }
+}
+
+function heroUltimate() {
+  const hero = state.hero;
+  if (hero.isDown || hero.ultCd > 0) return;
+  if (hero.hp / hero.maxHp < 0.6) {
+    addMessage('Ultimate needs at least 60% HP', '#ffb4a2');
+    return;
+  }
+  hero.ultCd = CONFIG.hero.ultCd;
+  hero.ultTime = 0.32;
+  punch(0.08, 0.018);
+  emitBurst(hero.x, hero.y - 62, '#ffd56f', 18, 96, 4.2);
+  emitRing(hero.x, hero.y - 62, '#ffe38d', 74, 0.16);
+  emitRing(hero.x, hero.y - 62, '#fff3c7', 104, 0.24);
+  let cleared = 0;
+  for (const enemy of state.enemies) {
+    if (enemy.dead) continue;
+    const hitX = hero.x;
+    const hitY = hero.y - 62;
+    const hitRadius = enemy.type === 'boss' ? 102 : 110;
+    if (dist(hitX, hitY, enemy.x, enemy.y - enemy.radius * 0.45) <= hitRadius + enemy.radius) {
+      const lethal = enemy.hp <= (enemy.type === 'boss' ? 170 : enemy.type === 'miniboss' ? 230 : 999);
+      damageEnemy(enemy, enemy.type === 'boss' ? 170 : enemy.type === 'miniboss' ? 230 : 999, null, false);
+      if (lethal) {
+        emitBurst(enemy.x, enemy.y - enemy.radius * 0.4, '#fff2a6', 10, 96, 3.8);
+        emitRing(enemy.x, enemy.y - enemy.radius * 0.25, '#ffe38d', 38, 0.22);
+      }
+      cleared += 1;
+    }
+  }
+  if (cleared > 0) sound.play('enemyDown');
+  sound.play('ultimate');
+}
+
+function heroPlant() {
+  const hero = state.hero;
+  if (hero.isDown || hero.plantCd > 0) return;
+  const zone = hero.x > CONFIG.slopeStart ? 'enemy' : 'sanctuary';
+  const tree = createTree(hero.x, hero.y, zone);
+  if (!tree) {
+    addMessage('No planting slot here', '#ffcf9b');
+    return;
+  }
+  hero.plantCd = CONFIG.hero.plantCd;
+  emitLeaf(tree.x, tree.y - 12);
+  sound.play('plant');
+  addMessage(zone === 'enemy' ? 'Purification tree planted' : 'Sanctuary tree planted', '#9bffac');
+}
+
+function nearestTreeTarget(x, y) {
+  let best = null;
+  let bestD = Infinity;
+  for (const tree of state.trees) {
+    if (tree.dead) continue;
+    const d = dist(x, y, tree.x, tree.y);
+    if (d < bestD) {
+      bestD = d;
+      best = tree;
+    }
+  }
+  return best;
+}
+
+function updateHero(dt) {
+  const hero = state.hero;
+  if (hero.invuln > 0) hero.invuln -= dt;
+  hero.attackCd = Math.max(0, hero.attackCd - dt);
+  hero.plantCd = Math.max(0, hero.plantCd - dt);
+  hero.ultCd = Math.max(0, hero.ultCd - dt);
+  hero.attackTime = Math.max(0, hero.attackTime - dt);
+  hero.ultTime = Math.max(0, hero.ultTime - dt);
+  if (hero.isDown) {
+    if (hero.lives <= 0) {
+      state.phase = 'gameover';
+      state.gameOverTip = 'The hero fell before the land could recover.';
+      sound.play('gameover');
+      return;
+    }
+    hero.respawnTimer -= dt;
+    if (hero.respawnTimer <= 0) {
+      hero.isDown = false;
+      hero.hp = hero.maxHp;
+      hero.x = CONFIG.hero.x;
+      hero.y = CONFIG.hero.y;
+      hero.invuln = 1.2;
+      addMessage('Hero revived', '#d8ffb3');
+    }
+    return;
+  }
+
+  let dx = 0;
+  let dy = 0;
+  if (keys['KeyA'] || keys['ArrowLeft']) dx -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+  if (keys['KeyW'] || keys['ArrowUp']) dy -= 1;
+  if (keys['KeyS'] || keys['ArrowDown']) dy += 1;
+  const moving = dx !== 0 || dy !== 0;
+  if (moving) {
+    const len = Math.hypot(dx, dy);
+    dx /= len;
+    dy /= len;
+    let slopeSpeed = 1;
+    if (hero.x > CONFIG.sanctuaryEdge) slopeSpeed = lerp(1, 0.72, clamp((hero.x - CONFIG.sanctuaryEdge) / 260, 0, 1));
+    if (hero.x > CONFIG.slopeStart) slopeSpeed = 0.92;
+    hero.x = clamp(hero.x + dx * CONFIG.hero.speed * slopeSpeed * dt, 70, CONFIG.width - 65);
+    hero.y = clamp(hero.y + dy * CONFIG.hero.speed * dt, 120, CONFIG.height - 38);
+    hero.walkTime += dt * 10;
+    hero.facing = dx < 0 ? -1 : dx > 0 ? 1 : hero.facing;
+  }
+  if (state.waveIntro > 0) {
+    state.waveIntro = Math.max(0, state.waveIntro - dt);
+    state.shake = Math.max(state.shake, 0.04 + state.waveIntro * 0.08);
+  }
+}
+
+function updateTrees(dt) {
+  for (const tree of state.trees) {
+    if (tree.dead) continue;
+    tree.sway += dt * 2;
+    const polluted = tree.zone === 'enemy';
+    if (polluted) {
+      for (const patch of state.pollutions) {
+        const d = dist(tree.x, tree.y, patch.x, patch.y);
+        if (d < patch.radius + 50 && patch.toxin > 0) {
+          const take = Math.min(patch.toxin, dt * 0.12 * (tree.absorb || 1));
+          patch.toxin -= take;
+          state.stats.toxin += take * 40;
+        }
+      }
+    } else {
+      state.stats.co2 += dt * 1.5 * (tree.absorb || 1);
+      state.core.hp = clamp(state.core.hp + dt * 0.16 * (tree.heal || 1), 0, CONFIG.core.maxHp);
+    }
+  }
+}
+
+function updateEnemies(dt) {
+  for (const enemy of state.enemies) {
+    if (enemy.dead) continue;
+    enemy.hitFlash = Math.max(0, (enemy.hitFlash || 0) - dt);
+    enemy.hitSquash = Math.max(0, (enemy.hitSquash || 0) - dt * 1.8);
+    enemy.gait += dt * (enemy.type === 'boss' ? 4 : enemy.type === 'miniboss' ? 5 : 7);
+    enemy.attackCd = Math.max(0, enemy.attackCd - dt);
+    if (enemy.burn > 0) {
+      enemy.burn -= dt;
+      damageEnemy(enemy, dt * 9, null, true);
+    }
+    if (enemy.slow > 0) enemy.slow -= dt;
+
+    let target = nearestTreeTarget(enemy.x, enemy.y);
+    if (!target) target = { x: CONFIG.core.x, y: CONFIG.core.y, isCore: true };
+    const tx = target.x;
+    const ty = target.y;
+    const d = dist(enemy.x, enemy.y, tx, ty);
+    const slopePenalty = enemy.x < CONFIG.slopeStart ? lerp(1, 0.35, clamp((CONFIG.slopeStart - enemy.x) / 360, 0, 1)) : 1;
+    const slowPenalty = enemy.slow > 0 ? 0.65 : 1;
+    const moveSpeed = enemy.speed * slopePenalty * slowPenalty;
+
+    if (d > enemy.range) {
+      const nx = (tx - enemy.x) / d;
+      const ny = (ty - enemy.y) / d;
+      enemy.x += nx * moveSpeed * dt;
+      enemy.y += ny * moveSpeed * dt;
+    } else if (enemy.attackCd <= 0) {
+      enemy.attackCd = CONFIG.enemy[enemy.type].attackCd;
+      if (target.isCore) {
+        damageCore(enemy.damage);
+      } else if (!target.dead) {
+        target.hp = Math.max(0, target.hp - enemy.damage);
+        emitBurst(target.x, target.y - 35, '#c4d589', 10, 70, 4);
+        if (target.hp <= 0) target.dead = true;
+      }
+    }
+
+    if (enemy.type === 'skull') {
+      enemy.poisonTimer += dt;
+      if (enemy.poisonTimer > 1.8) {
+        enemy.poisonTimer = 0;
+        state.pollutions.push({
+          x: enemy.x - 12,
+          y: enemy.y,
+          toxin: 0.18,
+          radius: rand(24, 38)
+        });
+      }
+    }
+
+    if (!state.hero.isDown) {
+      const heroD = dist(enemy.x, enemy.y, state.hero.x, state.hero.y - 50);
+      if (heroD < enemy.radius + 28 && enemy.attackCd <= 0) {
+        enemy.attackCd = CONFIG.enemy[enemy.type].attackCd;
+        damageHero(enemy.damage);
+      }
+    }
+  }
+  state.enemies = state.enemies.filter(e => !e.dead || e.hp > 0);
+}
+
+function updateProjectiles(dt) {
+  for (const p of state.projectiles) {
+    p.ttl -= dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (p.ttl <= 0) continue;
+    for (const enemy of state.enemies) {
+      if (enemy.dead) continue;
+      if (dist(p.x, p.y, enemy.x, enemy.y - enemy.radius * 0.4) < p.radius + enemy.radius) {
+        damageEnemy(enemy, p.dmg, p.effect);
+        p.ttl = 0;
+        emitBurst(p.x, p.y, p.color, 4, 52, 2.4);
+        break;
+      }
+    }
+  }
+  state.projectiles = state.projectiles.filter(p => p.ttl > 0);
+}
+
+function updateParticles(dt) {
+  state.hitStop = Math.max(0, state.hitStop - dt);
+  state.shake = Math.max(0, state.shake - dt * 1.8);
+  for (const p of state.particles) {
+    p.ttl -= dt;
+    if (p.ring) {
+      const total = p.maxRadius || p.radius;
+      p.radius = lerp(total, total * 1.7, 1 - p.ttl / Math.max(0.0001, (p.life || total)));
+      continue;
+    }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.96;
+    p.vy = p.vy * 0.96 + 20 * dt;
+  }
+  state.particles = state.particles.filter(p => p.ttl > 0);
+  state.messages = state.messages.filter(m => {
+    m.ttl -= dt;
+    m.y -= dt * 18;
+    return m.ttl > 0;
+  });
+  state.slashes = state.slashes.filter(s => {
+    s.ttl -= dt;
+    return s.ttl > 0;
+  });
+}
+
+function updateWave(dt) {
+  if (state.waveState === 'break') {
+    state.waveTimer -= dt;
+    if (state.waveTimer <= 0) openNextWave();
+    return;
+  }
+  if (state.waveState === 'fighting') {
+    state.waveSpawnTimer -= dt;
+    if (state.waveQueue.length > 0 && state.waveSpawnTimer <= 0) {
+      spawnEnemy(state.waveQueue.shift());
+      state.waveSpawnTimer = state.waveSpawnGap;
+    }
+    if (state.waveQueue.length === 0 && state.enemies.every(e => e.dead || e.hp <= 0)) {
+      if (state.waveIndex === CONFIG.waves.length - 1) {
+        state.waveState = 'victoryCheck';
+      } else {
+        state.waveState = 'break';
+        state.waveTimer = CONFIG.breakDuration;
+        state.breakPlantHint = true;
+        addMessage(`Wave ${state.waveIndex + 1} cleared`, '#bfffb5', 1.6);
+        if (state.waveIndex === 0 && !state.ownedWeapons.includes('firesword')) {
+          addMessage('Flame Greatsword is now available in the armory', '#ff9d4f', 1.8);
+        }
+      }
+    }
+  }
+  if (state.waveState === 'victoryCheck' && state.enemies.every(e => e.dead || e.hp <= 0)) {
+    state.phase = 'victory';
+    state.victoryTimer = 0;
+    state.cleanReveal = 0;
+    sound.play('victory');
+  }
+}
+
+function updatePlaying(dt) {
+  updateHero(dt);
+  updateTrees(dt);
+  updateEnemies(dt);
+  updateProjectiles(dt);
+  updateParticles(dt);
+  updateWave(dt);
+}
+
+function drawImageCentered(img, x, y, scale, flip = 1) {
+  if (!imageReady(img)) return false;
+  const w = img.width * scale;
+  const h = img.height * scale;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(flip, 1);
+  ctx.drawImage(img, -w / 2, -h, w, h);
+  ctx.restore();
+  return true;
+}
+
+function enemyVisualScale(type) {
+  return CONFIG.visual.enemyScale[type] || 0.12;
+}
+
+function enemyShadowSpec(type) {
+  return CONFIG.visual.enemyShadow[type] || { rx: 20, ry: 8 };
+}
+
+function enemyBobAmount(type) {
+  return CONFIG.visual.bob[type] || 0.7;
+}
+
+function drawBackground() {
+  if (imageReady(images.map)) ctx.drawImage(images.map, 0, 0, CONFIG.width, CONFIG.height);
+  else {
+    const g = ctx.createLinearGradient(0, 0, CONFIG.width, 0);
+    g.addColorStop(0, '#95c768');
+    g.addColorStop(0.42, '#b5b76c');
+    g.addColorStop(0.64, '#7b6652');
+    g.addColorStop(1, '#49384f');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+  }
+
+  for (const patch of state.pollutions) {
+    const alpha = clamp(patch.toxin, 0, 1) * 0.25;
+    const g = ctx.createRadialGradient(patch.x, patch.y, 0, patch.x, patch.y, patch.radius);
+    const cleanFactor = state.phase === 'victory' ? 1 - state.cleanReveal : 1;
+    g.addColorStop(0, `rgba(132, 72, 164, ${alpha * cleanFactor})`);
+    g.addColorStop(1, 'rgba(132, 72, 164, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(patch.x, patch.y, patch.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (state.phase === 'victory') {
+    state.cleanReveal = clamp(state.victoryTimer / 3, 0, 1);
+    if (imageReady(images.cleanFactory)) {
+      const fx = 840;
+      const fw = 360 * state.cleanReveal;
+      if (fw > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(fx, 0, fw, CONFIG.height);
+        ctx.clip();
+        ctx.drawImage(images.cleanFactory, 840, 0, 360, CONFIG.height);
+        ctx.restore();
+      }
+    }
+    const sweepX = 840 + 360 * state.cleanReveal;
+    ctx.fillStyle = 'rgba(200,255,180,0.18)';
+    ctx.fillRect(840, 0, 360 * state.cleanReveal, CONFIG.height);
+    ctx.fillStyle = 'rgba(240,255,220,0.45)';
+    ctx.fillRect(sweepX - 6, 0, 10, CONFIG.height);
+  }
+}
+
+function drawTrees() {
+  for (const tree of state.trees) {
+    if (tree.dead) continue;
+    const health = tree.hp / tree.maxHp;
+    const sway = Math.sin(tree.sway) * 0.35;
+    ctx.save();
+    ctx.fillStyle = `rgba(20, 18, 10, ${tree.zone === 'enemy' ? 0.22 : 0.3})`;
+    ctx.beginPath();
+    ctx.ellipse(tree.x, tree.y + 2, CONFIG.visual.treeShadow.rx, CONFIG.visual.treeShadow.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    const treeScale = tree.zone === 'enemy' ? CONFIG.visual.treeScale.enemy : CONFIG.visual.treeScale.sanctuary;
+    if (!drawImageCentered(images.tree, tree.x, tree.y + 10 + sway, treeScale)) {
+      ctx.fillStyle = health > 0.5 ? '#4a8b38' : health > 0.2 ? '#88843a' : '#75614f';
+      ctx.beginPath();
+      ctx.arc(tree.x, tree.y - 16, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#6b4827';
+      ctx.fillRect(tree.x - 4, tree.y - 14, 8, 24);
+    }
+    if (tree.zone === 'enemy') {
+      ctx.strokeStyle = 'rgba(170,255,170,0.32)';
+      ctx.beginPath();
+      ctx.arc(tree.x, tree.y - 10, 38, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawCore() {
+  ctx.save();
+  const pulse = 1 + Math.sin(performance.now() * 0.004) * 0.05;
+  const aura = ctx.createRadialGradient(CONFIG.core.x, CONFIG.core.y, 10, CONFIG.core.x, CONFIG.core.y, 72);
+  aura.addColorStop(0, 'rgba(164,255,208,0.42)');
+  aura.addColorStop(1, 'rgba(164,255,208,0)');
+  ctx.fillStyle = aura;
+  ctx.beginPath();
+  ctx.arc(CONFIG.core.x, CONFIG.core.y, 72 * pulse, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  if (!drawImageCentered(images.core, CONFIG.core.x, CONFIG.core.y + 34, CONFIG.visual.coreScale)) {
+    ctx.fillStyle = '#9fffd8';
+    ctx.beginPath();
+    ctx.arc(CONFIG.core.x, CONFIG.core.y, 26, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const pct = state.core.hp / CONFIG.core.maxHp;
+  ctx.fillStyle = 'rgba(12, 18, 14, 0.7)';
+  ctx.fillRect(CONFIG.core.x - 56, CONFIG.core.y - 84, 112, 12);
+  ctx.fillStyle = '#61e79e';
+  ctx.fillRect(CONFIG.core.x - 54, CONFIG.core.y - 82, 108 * pct, 8);
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.strokeRect(CONFIG.core.x - 56, CONFIG.core.y - 84, 112, 12);
+}
+
+function drawHero() {
+  const hero = state.hero;
+  if (hero.isDown) {
+    ctx.fillStyle = 'rgba(10, 10, 10, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(hero.x, hero.y - 5, 28, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e7b4b4';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Respawn ${hero.respawnTimer.toFixed(1)}s`, hero.x, hero.y - 78);
+    return;
+  }
+
+  const set = images.hero[state.currentWeapon];
+  const moving = (keys['KeyA'] || keys['ArrowLeft'] || keys['KeyD'] || keys['ArrowRight'] || keys['KeyW'] || keys['ArrowUp'] || keys['KeyS'] || keys['ArrowDown']);
+  let sprite = set.idle;
+  if (hero.ultTime > 0 && imageReady(images.hero.ultimate)) sprite = images.hero.ultimate;
+  else if (hero.attackTime > 0 && imageReady(set.attack)) sprite = set.attack;
+  else if (moving) {
+    const frame = Math.floor(hero.walkTime * 5) % set.move.length;
+    sprite = set.move[frame];
+  }
+
+  ctx.save();
+  const shadowAlpha = hero.invuln > 0 ? 0.18 : 0.28;
+  ctx.fillStyle = `rgba(14, 12, 10, ${shadowAlpha})`;
+  ctx.beginPath();
+  ctx.ellipse(hero.x, hero.y - 4, CONFIG.visual.heroShadow.rx, CONFIG.visual.heroShadow.ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const scale = CONFIG.visual.heroScale[state.currentWeapon] || CONFIG.visual.heroScale.sword;
+  const lunge = hero.attackTime > 0 ? hero.facing * (1 - hero.attackTime / 0.24) * 5 : 0;
+  if (hero.ultTime > 0) {
+    const t = clamp(hero.ultTime / 0.32, 0, 1);
+    const r = 48 + (1 - t) * 76;
+    const g = ctx.createRadialGradient(hero.x, hero.y - 56, 8, hero.x, hero.y - 56, r);
+    g.addColorStop(0, `rgba(255, 232, 140, ${0.32 * t})`);
+    g.addColorStop(0.55, `rgba(255, 214, 96, ${0.18 * t})`);
+    g.addColorStop(1, 'rgba(255, 214, 96, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(hero.x, hero.y - 56, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 241, 182, ${0.75 * t})`;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(hero.x, hero.y - 56, 22 + (1 - t) * 88, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  drawImageCentered(sprite, hero.x + lunge, hero.y + Math.sin(hero.walkTime * 2) * CONFIG.visual.bob.hero, scale, hero.facing);
+}
+
+function enemySprite(enemy) {
+  if (enemy.type === 'miniboss') {
+    return images.enemy.miniboss[Math.floor(enemy.gait) % 4] || images.enemy.minibossIdle;
+  }
+  if (enemy.type === 'boss') {
+    return images.enemy.boss[Math.floor(enemy.gait) % 4] || images.enemy.bossIdle;
+  }
+  return images.enemy[enemy.type];
+}
+
+function drawEnemies() {
+  for (const enemy of state.enemies) {
+    if (enemy.dead) continue;
+    const shadow = enemyShadowSpec(enemy.type);
+    ctx.fillStyle = 'rgba(18,14,10,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(enemy.x, enemy.y - 3, shadow.rx, shadow.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const bob = Math.sin(enemy.gait) * enemyBobAmount(enemy.type);
+    const sprite = enemySprite(enemy);
+    const flash = enemy.hitFlash || 0;
+    const squash = enemy.hitSquash || 0;
+    if (imageReady(sprite)) {
+      const scale = enemyVisualScale(enemy.type);
+      const w = sprite.width * scale * (1 + squash);
+      const h = sprite.height * scale * (1 - squash * 0.55);
+      const flip = 1;
+      ctx.save();
+      ctx.translate(enemy.x, enemy.y + bob);
+      ctx.scale(flip, 1);
+      if (flash > 0) {
+        ctx.globalAlpha = 0.32 + flash * 2;
+        ctx.drawImage(sprite, -w / 2, -h, w, h);
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-w / 2, -h, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+      ctx.drawImage(sprite, -w / 2, -h, w, h);
+      ctx.restore();
+    }
+    const pct = enemy.hp / enemy.maxHp;
+    ctx.fillStyle = 'rgba(10, 12, 15, 0.65)';
+    ctx.fillRect(enemy.x - 28, enemy.y - enemy.radius - 28, 56, 8);
+    ctx.fillStyle = enemy.type === 'boss' ? '#e56cff' : enemy.type === 'miniboss' ? '#f5ac52' : '#82f08d';
+    ctx.fillRect(enemy.x - 27, enemy.y - enemy.radius - 27, 54 * pct, 6);
+  }
+}
+
+function drawProjectiles() {
+  for (const p of state.projectiles) {
+    const len = Math.hypot(p.vx, p.vy) || 1;
+    const tx = (p.vx / len) * 16;
+    const ty = (p.vy / len) * 16;
+    ctx.strokeStyle = 'rgba(255, 121, 255, 0.5)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(p.x - tx, p.y - ty);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawSlashes() {
+  for (const slash of state.slashes) {
+    const t = clamp(slash.ttl / 0.16, 0, 1);
+    ctx.save();
+    ctx.translate(slash.x, slash.y);
+    ctx.scale(slash.facing, 1);
+    ctx.rotate(-0.25 + (1 - t) * 0.55);
+    ctx.globalAlpha = 1 - t;
+    ctx.strokeStyle = slash.color;
+    ctx.lineWidth = 6 * (1 - t * 0.45);
+    ctx.beginPath();
+    ctx.arc(0, 0, slash.size * (0.75 + (1 - t) * 0.22), -slash.arc * 0.55, slash.arc * 0.18);
+    ctx.stroke();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = (1 - t) * 0.45;
+    ctx.beginPath();
+    ctx.arc(0, 0, slash.size * (0.6 + (1 - t) * 0.18), -slash.arc * 0.52, slash.arc * 0.14);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawParticles() {
+  for (const p of state.particles) {
+    if (p.ring) {
+      ctx.strokeStyle = p.color;
+      ctx.globalAlpha = clamp(p.ttl * 2, 0, 1);
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    ctx.globalAlpha = clamp(p.ttl * 1.5, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawHud() {
+  const hero = state.hero;
+  const co2Target = 180;
+  const toxinTarget = 240;
+  const canAffordShop = hasAffordableShopItem();
+
+  function meter(x, y, w, h, label, value, maxValue, fill, suffix = '') {
+    ctx.fillStyle = 'rgba(7, 12, 10, 0.78)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(236, 255, 238, 0.16)';
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = '#eefcf0';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(label, x + 10, y + 15);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${Math.round(value)}${suffix}`, x + w - 10, y + 15);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(x + 10, y + 22, w - 20, 8);
+    ctx.fillStyle = fill;
+    ctx.fillRect(x + 10, y + 22, (w - 20) * clamp(value / maxValue, 0, 1), 8);
+  }
+
+  function skillCard(x, y, w, h, keyLabel, label, fillRatio, ready, tone) {
+    ctx.fillStyle = 'rgba(7, 12, 10, 0.82)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = ready ? tone : 'rgba(180, 145, 120, 0.8)';
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = ready ? tone : 'rgba(180, 145, 120, 0.75)';
+    ctx.fillRect(x + 7, y + 7, 24, 24);
+    ctx.fillStyle = '#102014';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(keyLabel, x + 14, y + 24);
+    ctx.fillStyle = '#f4fff5';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(label, x + 38, y + 17);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(x + 38, y + 23, w - 48, 8);
+    ctx.fillStyle = ready ? tone : '#d2a384';
+    ctx.fillRect(x + 38, y + 23, (w - 48) * clamp(fillRatio, 0, 1), 8);
+  }
+
+  meter(16, 14, 188, 38, 'CO2', state.stats.co2, co2Target, '#8de38c', ' kg');
+  meter(214, 14, 188, 38, 'Toxin', state.stats.toxin, toxinTarget, '#9de0ff', ' u');
+
+  ctx.fillStyle = 'rgba(7, 12, 10, 0.78)';
+  ctx.fillRect(412, 14, 430, 54);
+  ctx.fillStyle = '#f1fff2';
+  ctx.font = '12px sans-serif';
+  ctx.fillText(`Wave ${Math.max(1, state.waveIndex + 1)} / 3`, 424, 30);
+  ctx.fillText(`Coins ${state.coins}`, 510, 30);
+  ctx.fillText(CONFIG.weapons[state.currentWeapon].name, 590, 30);
+  ctx.fillText(`Lives ${Math.max(hero.lives, 0)}`, 716, 30);
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(804 + i * 12, 29, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = i < state.waveIndex ? '#7fe4a3' : i === state.waveIndex ? '#ffd56f' : 'rgba(255,255,255,0.18)';
+    ctx.fill();
+  }
+  meter(424, 34, 156, 24, 'Hero HP', hero.hp, hero.maxHp, '#85df8f');
+  meter(594, 34, 156, 24, 'Core HP', state.core.hp, CONFIG.core.maxHp, '#7fe4d0');
+
+  const attackReady = 1 - clamp(hero.attackCd / CONFIG.hero.attackCd, 0, 1);
+  const plantReady = 1 - clamp(hero.plantCd / CONFIG.hero.plantCd, 0, 1);
+  const ultCdReady = 1 - clamp(hero.ultCd / CONFIG.hero.ultCd, 0, 1);
+  const ultHpReady = clamp((hero.hp / hero.maxHp - 0.6) / 0.4, 0, 1);
+  const ultReady = Math.min(ultCdReady, hero.hp / hero.maxHp >= 0.6 ? 1 : ultHpReady);
+  const dockY = 590;
+  skillCard(16, dockY, 94, 40, 'F', 'Plant', plantReady, hero.plantCd <= 0 && !hero.isDown, '#8fe09a');
+  skillCard(118, dockY, 94, 40, 'J', 'Skill', attackReady, hero.attackCd <= 0 && !hero.isDown, '#8fd6ff');
+  skillCard(220, dockY, 94, 40, 'K', 'Ultimate', ultReady, hero.ultCd <= 0 && hero.hp / hero.maxHp >= 0.6 && !hero.isDown, '#ffd783');
+  skillCard(322, dockY, 94, 40, 'B', 'Shop', state.shopOpen ? 1 : canAffordShop ? 1 : 0.35, true, canAffordShop ? '#ffe08b' : '#d5c3ff');
+
+  if (state.waveState === 'break' && state.phase === 'playing') {
+    ctx.fillStyle = 'rgba(12, 18, 16, 0.68)';
+    ctx.fillRect(360, 590, 480, 38);
+    ctx.fillStyle = '#d9ffd1';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Plant during the break: move to the polluted zone and press F`, 600, 616);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawWaveOverlay() {
+  if (state.phase !== 'playing') return;
+  if (state.waveState === 'break') {
+    const total = CONFIG.breakDuration;
+    const pct = clamp(state.waveTimer / total, 0, 1);
+    ctx.fillStyle = 'rgba(5, 10, 8, 0.76)';
+    ctx.fillRect(350, 72, 500, 54);
+    ctx.strokeStyle = 'rgba(225,255,230,0.22)';
+    ctx.strokeRect(350, 72, 500, 54);
+    ctx.fillStyle = '#edfdee';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Next Wave in ${Math.ceil(state.waveTimer)}s`, 600, 96);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(382, 106, 436, 10);
+    ctx.fillStyle = '#8ce39a';
+    ctx.fillRect(382, 106, 436 * pct, 10);
+    ctx.textAlign = 'left';
+  }
+  if (state.waveState === 'fighting') {
+    const spawned = state.waveQueue.length;
+    const alive = state.enemies.filter(e => !e.dead && e.hp > 0).length;
+    const total = Object.values(CONFIG.waves[state.waveIndex] || {}).reduce((a, b) => a + b, 0) || 1;
+    const resolved = clamp((total - spawned - alive) / total, 0, 1);
+    ctx.fillStyle = 'rgba(5, 10, 8, 0.72)';
+    ctx.fillRect(392, 72, 416, 36);
+    ctx.strokeStyle = 'rgba(225,255,230,0.16)';
+    ctx.strokeRect(392, 72, 416, 36);
+    ctx.fillStyle = '#f3fff3';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Wave ${state.waveIndex + 1} progress`, 600, 90);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(412, 96, 376, 7);
+    ctx.fillStyle = '#9be889';
+    ctx.fillRect(412, 96, 376 * resolved, 7);
+    ctx.textAlign = 'left';
+  }
+  if (state.waveIntro > 0) {
+    const pct = clamp(state.waveIntro / 1.6, 0, 1);
+    const alpha = 0.25 + pct * 0.45;
+    const bannerW = 620;
+    const bannerX = (CONFIG.width - bannerW) / 2;
+    const bannerY = 156;
+    ctx.fillStyle = `rgba(8, 12, 16, ${0.68 * alpha})`;
+    ctx.fillRect(bannerX, bannerY, bannerW, 124);
+    ctx.strokeStyle = `rgba(255, 241, 188, ${0.38 * alpha})`;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bannerX, bannerY, bannerW, 124);
+    ctx.fillStyle = '#fff5c8';
+    ctx.font = 'bold 58px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`WAVE ${state.waveIndex + 1}`, 600, 214);
+    ctx.fillStyle = '#fff8e2';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(state.waveIndex === 1 ? 'Mini Boss incoming' : state.waveIndex === 2 ? 'Final assault incoming' : 'Defend the Pure Core', 600, 248);
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillRect(430, 262, 340, 12);
+    ctx.fillStyle = '#ffd56f';
+    ctx.fillRect(430, 262, 340 * (1 - pct), 12);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawMessages() {
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 20px sans-serif';
+  for (const m of state.messages) {
+    ctx.fillStyle = m.color;
+    ctx.fillText(m.text, CONFIG.width / 2, m.y);
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawShop() {
+  if (!state.shopOpen || state.phase !== 'playing') return;
+  ctx.fillStyle = 'rgba(5, 10, 8, 0.84)';
+  ctx.fillRect(180, 72, 840, 470);
+  ctx.strokeStyle = '#75b682';
+  ctx.strokeRect(180, 72, 840, 470);
+  ctx.fillStyle = '#effff1';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Field Armory', 600, 108);
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = '#ffd17f';
+  ctx.fillText(`Coins: ${state.coins}`, 600, 132);
+  const ids = ['firesword', 'icesword', 'staff'];
+  ids.forEach((id, i) => {
+    const weapon = CONFIG.weapons[id];
+    const x = 214 + i * 258;
+    const y = 156;
+    const owned = state.ownedWeapons.includes(id);
+    const affordable = state.coins >= weapon.unlockCost;
+    ctx.fillStyle = owned ? 'rgba(38, 98, 52, 0.9)' : affordable ? 'rgba(50, 58, 42, 0.95)' : 'rgba(28, 32, 30, 0.94)';
+    ctx.fillRect(x, y, 224, 178);
+    ctx.strokeStyle = owned ? weapon.slash : affordable ? '#ffe08b' : 'rgba(255,255,255,0.12)';
+    ctx.strokeRect(x, y, 224, 178);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(weapon.name, x + 14, y + 24);
+    ctx.font = '13px sans-serif';
+    ctx.fillText(`Damage: ${weapon.dmg}`, x + 14, y + 52);
+    ctx.fillText(weapon.projectile ? 'Attack: Dual arc projectile' : 'Attack: Sword slash', x + 14, y + 74);
+    if (weapon.burn) ctx.fillText(`Burn: ${weapon.burn}/s`, x + 14, y + 96);
+    if (weapon.slow) ctx.fillText(`Slow: ${Math.round(weapon.slow * 100)}%`, x + 14, y + 118);
+    ctx.fillStyle = owned ? '#d8ffe1' : affordable ? '#ffe08b' : '#c2b6ad';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(owned ? (state.currentWeapon === id ? 'Equipped' : 'Owned') : `Cost: ${weapon.unlockCost}`, x + 14, y + 154);
+    ctx.fillStyle = owned ? '#e7fff0' : affordable ? '#fff5d2' : '#d6cfc7';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(owned ? (state.currentWeapon === id ? 'Active now' : 'Click to equip') : affordable ? 'Click to buy' : 'Not enough coins', x + 14, y + 172);
+    weapon._shopRect = { x, y, w: 224, h: 178 };
+  });
+  const treeCards = [
+    { id: 'tree2', label: 'Oak Upgrade', cost: 100, desc1: 'All trees gain +50% HP', desc2: 'CO2 and cleanse x1.5', tier: 2 },
+    { id: 'tree3', label: 'Sacred Life Tree', cost: 200, desc1: 'All trees gain +100% HP', desc2: 'CO2 x2.0 and heal x1.5', tier: 3 }
+  ];
+  treeCards.forEach((card, i) => {
+    const x = 332 + i * 268;
+    const y = 366;
+    const owned = state.treeTier >= card.tier;
+    const affordable = state.coins >= card.cost;
+    ctx.fillStyle = owned ? 'rgba(46, 106, 68, 0.9)' : affordable ? 'rgba(50, 58, 42, 0.95)' : 'rgba(28, 32, 30, 0.94)';
+    ctx.fillRect(x, y, 240, 116);
+    ctx.strokeStyle = owned ? '#9fe6a2' : affordable ? '#ffe08b' : 'rgba(255,255,255,0.12)';
+    ctx.strokeRect(x, y, 240, 116);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(card.label, x + 14, y + 24);
+    ctx.font = '13px sans-serif';
+    ctx.fillText(card.desc1, x + 14, y + 50);
+    ctx.fillText(card.desc2, x + 14, y + 72);
+    ctx.fillStyle = owned ? '#d8ffe1' : affordable ? '#ffe08b' : '#c2b6ad';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(owned ? 'Purchased' : `Cost: ${card.cost}`, x + 14, y + 98);
+    card._shopRect = { x, y, w: 240, h: 116 };
+    state[card.id + 'Rect'] = card._shopRect;
+  });
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#c0e6c6';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Click a card to unlock, equip, or upgrade. Press B to close the armory.', 600, 516);
+  ctx.textAlign = 'left';
+}
+
+function drawStart() {
+  drawBackground();
+  ctx.fillStyle = 'rgba(6, 10, 12, 0.62)';
+  ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+  ctx.fillStyle = 'rgba(156, 255, 184, 0.12)';
+  ctx.fillRect(80, 70, 340, 500);
+  ctx.fillStyle = 'rgba(219, 116, 164, 0.12)';
+  ctx.fillRect(780, 70, 340, 500);
+  drawImageCentered(images.hero.sword.idle, 290, 520, CONFIG.visual.startScale.hero, 1);
+  drawImageCentered(images.enemy.boss[0], 930, 548, CONFIG.visual.startScale.boss, -1);
+  ctx.fillStyle = '#e6fff0';
+  ctx.font = 'bold 56px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Green Shield Guardian', 600, 92);
+  ctx.fillStyle = '#d4f9dd';
+  ctx.font = '18px sans-serif';
+  ctx.fillText('Protect the Pure Core. Push back the factory horde. Restore the poisoned land.', 600, 128);
+  ctx.fillStyle = '#fff0a8';
+  ctx.font = 'bold 74px Georgia, serif';
+  ctx.fillText('VS', 600, 258);
+  ctx.fillStyle = 'rgba(8, 14, 12, 0.78)';
+  ctx.fillRect(340, 340, 520, 160);
+  ctx.strokeStyle = 'rgba(188,255,204,0.28)';
+  ctx.strokeRect(340, 340, 520, 160);
+  const lines = [
+    'Move with WASD or Arrow Keys',
+    'Press J to attack, K to unleash your ultimate',
+    'Press F to plant a tree wherever your hero stands',
+    'Press B to open the field armory between waves'
+  ];
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('Mission Brief', 600, 370);
+  ctx.font = '16px sans-serif';
+  lines.forEach((line, i) => ctx.fillText(line, 600, 404 + i * 24));
+  ctx.fillStyle = '#1e8e4a';
+  ctx.fillRect(452, 536, 296, 58);
+  ctx.strokeStyle = '#c1ffd6';
+  ctx.strokeRect(452, 536, 296, 58);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 25px sans-serif';
+  ctx.fillText('Start Mission', 600, 574);
+  ctx.fillStyle = '#bde7c9';
+  ctx.font = '13px sans-serif';
+  ctx.fillText('Click anywhere to begin', 600, 616);
+  ctx.textAlign = 'left';
+}
+
+function drawGameOver() {
+  drawBackground();
+  ctx.fillStyle = 'rgba(0,0,0,0.76)';
+  ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+  ctx.fillStyle = '#ff6d6d';
+  ctx.font = 'bold 56px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Mission Failed', 600, 208);
+  ctx.fillStyle = '#ffd3d3';
+  ctx.font = '22px sans-serif';
+  ctx.fillText(state.gameOverTip || 'The Pure Core was lost.', 600, 254);
+  ctx.fillStyle = '#d8ffd5';
+  ctx.font = '18px sans-serif';
+  ctx.fillText(`CO2 Absorbed: ${state.stats.co2.toFixed(0)} kg`, 600, 324);
+  ctx.fillText(`Toxin Cleared: ${state.stats.toxin.toFixed(0)} u`, 600, 352);
+  ctx.fillStyle = '#1c8c4d';
+  ctx.fillRect(500, 428, 200, 54);
+  ctx.strokeStyle = '#c8ffd5';
+  ctx.strokeRect(500, 428, 200, 54);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('Play Again', 600, 462);
+  ctx.textAlign = 'left';
+}
+
+function drawVictory(dt) {
+  state.victoryTimer += dt;
+  drawBackground();
+  drawTrees();
+  drawCore();
+  drawHero();
+  drawParticles();
+  ctx.fillStyle = `rgba(255,255,255,${clamp(state.victoryTimer / 3, 0, 0.1)})`;
+  ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+  if (state.victoryTimer < 3) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+    ctx.fillStyle = '#efffc5';
+    ctx.font = 'bold 76px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Victory', 600, 234);
+    ctx.font = '20px sans-serif';
+    ctx.fillStyle = '#f5ffe3';
+    ctx.fillText('The polluted factory frontier is being reclaimed.', 600, 276);
+    ctx.textAlign = 'left';
+    return;
+  }
+  ctx.fillStyle = 'rgba(4, 10, 8, 0.76)';
+  ctx.fillRect(330, 136, 540, 380);
+  ctx.strokeStyle = '#b9ffd1';
+  ctx.strokeRect(330, 136, 540, 380);
+  ctx.fillStyle = '#efffc5';
+  ctx.font = 'bold 64px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Victory', 600, 208);
+  ctx.fillStyle = '#f0fff2';
+  ctx.font = '18px sans-serif';
+  ctx.fillText(`Waves Cleared: ${CONFIG.waves.length}`, 600, 262);
+  ctx.fillText(`Coins Collected: ${state.coins}`, 600, 292);
+  ctx.fillText(`Enemies Defeated: ${state.kills}`, 600, 322);
+  ctx.fillText(`CO2 Absorbed: ${state.stats.co2.toFixed(0)} kg`, 600, 352);
+  ctx.fillText(`Toxin Cleared: ${state.stats.toxin.toFixed(0)} u`, 600, 382);
+  ctx.fillStyle = '#1c8c4d';
+  ctx.fillRect(500, 456, 200, 54);
+  ctx.strokeStyle = '#d1ffdc';
+  ctx.strokeRect(500, 456, 200, 54);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('Play Again', 600, 490);
+  ctx.textAlign = 'left';
+}
+
+function drawPlaying() {
+  const shakeClock = performance.now() * 0.035;
+  const shakeX = Math.sin(shakeClock) * state.shake * 12;
+  const shakeY = Math.cos(shakeClock * 1.31) * state.shake * 8;
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+  drawBackground();
+  drawTrees();
+  drawCore();
+  drawProjectiles();
+  drawEnemies();
+  drawHero();
+  drawSlashes();
+  drawParticles();
+  ctx.restore();
+  drawHud();
+  drawWaveOverlay();
+  drawMessages();
+  drawShop();
+}
+
+function gameLoop(ts) {
+  const rawDt = lastTime ? Math.min((ts - lastTime) / 1000, 0.033) : 0.016;
+  lastTime = ts;
+  const dt = state.hitStop > 0 ? 0.001 : rawDt;
+  ctx.clearRect(0, 0, CONFIG.width, CONFIG.height);
+
+  if (state.phase === 'start') {
+    drawStart();
+  } else if (state.phase === 'playing') {
+    updatePlaying(dt);
+    drawPlaying();
+  } else if (state.phase === 'gameover') {
+    drawGameOver();
+  } else if (state.phase === 'victory') {
+    updateParticles(dt);
+    drawVictory(dt);
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+function clickPoint(evt) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = CONFIG.width / rect.width;
+  const sy = CONFIG.height / rect.height;
+  return { x: (evt.clientX - rect.left) * sx, y: (evt.clientY - rect.top) * sy };
+}
+
+function handleShopClick(mx, my) {
+  const ids = ['firesword', 'icesword', 'staff'];
+  for (const id of ids) {
+    const weapon = CONFIG.weapons[id];
+    const rect = weapon._shopRect;
+    if (!rect) continue;
+    if (mx > rect.x && mx < rect.x + rect.w && my > rect.y && my < rect.y + rect.h) {
+      if (!state.ownedWeapons.includes(id)) {
+        if (state.coins >= weapon.unlockCost) {
+          state.coins -= weapon.unlockCost;
+          state.ownedWeapons.push(id);
+          state.currentWeapon = id;
+          addMessage(`${weapon.name} unlocked`, weapon.slash);
+          sound.play('coin');
+        } else {
+          addMessage('Not enough coins', '#ffb093');
+        }
+      } else {
+        state.currentWeapon = id;
+        addMessage(`${weapon.name} equipped`, '#dfffe1');
+      }
+      return true;
+    }
+  }
+  const treeCards = [
+    { rect: state.tree2Rect, cost: 100, tier: 2, label: 'Oak Upgrade' },
+    { rect: state.tree3Rect, cost: 200, tier: 3, label: 'Sacred Life Tree' }
+  ];
+  for (const card of treeCards) {
+    const rect = card.rect;
+    if (!rect) continue;
+    if (mx > rect.x && mx < rect.x + rect.w && my > rect.y && my < rect.y + rect.h) {
+      if (state.treeTier >= card.tier) {
+        addMessage(`${card.label} already active`, '#dfffe1');
+        return true;
+      }
+      if (state.coins < card.cost) {
+        addMessage('Not enough coins', '#ffb093');
+        return true;
+      }
+      state.coins -= card.cost;
+      applyTreeTier(card.tier);
+      addMessage(`${card.label} purchased`, '#9fe6a2');
+      sound.play('coin');
+      return true;
+    }
+  }
+  return false;
+}
+
+canvas.addEventListener('click', evt => {
+  sound.unlock();
+  const { x, y } = clickPoint(evt);
+  if (state.phase === 'start') {
+    resetGame();
+    state.phase = 'playing';
+    return;
+  }
+  if (state.phase === 'gameover') {
+    if (x > 500 && x < 700 && y > 428 && y < 482) {
+      resetGame();
+      state.phase = 'start';
+    }
+    return;
+  }
+  if (state.phase === 'victory') {
+    if (state.victoryTimer > 3 && x > 500 && x < 700 && y > 456 && y < 510) {
+      resetGame();
+      state.phase = 'start';
+    }
+    return;
+  }
+  if (state.phase === 'playing') {
+    const r = state.shopButtonRect;
+    if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) {
+      state.shopOpen = !state.shopOpen;
+      return;
+    }
+  }
+  if (state.shopOpen && handleShopClick(x, y)) return;
+});
+
+window.addEventListener('keydown', evt => {
+  keys[evt.code] = true;
+  sound.unlock();
+  if (evt.repeat) return;
+  if (evt.code === 'KeyF' && state.phase === 'playing') heroPlant();
+  if (evt.code === 'KeyJ' && state.phase === 'playing') heroAttack();
+  if (evt.code === 'KeyK' && state.phase === 'playing') heroUltimate();
+  if (evt.code === 'KeyB' && state.phase === 'playing') state.shopOpen = !state.shopOpen;
+  if (evt.code === 'KeyM') sound.toggle();
+});
+
+window.addEventListener('keyup', evt => {
+  keys[evt.code] = false;
+});
+
+sound.init();
+resetGame();
+state.phase = 'start';
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

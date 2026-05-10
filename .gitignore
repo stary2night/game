@@ -1,0 +1,9 @@
+_archive/
+
+# OS / editor temp files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local temp checks
+_tmp_check.js
