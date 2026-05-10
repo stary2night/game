@@ -32,6 +32,13 @@
 <img id="factoryCleanBg" src="assets/images/factory_clean_v1.png" style="display:none" alt="">
 <img id="coreSprite" src="assets/images/core_pure.png" style="display:none" alt="">
 <img id="treeSprite" src="assets/images/tree_sanctuary.png" style="display:none" alt="">
+<img id="uiIconSheet" src="assets/images/ui_icons_sheet_v1.png" style="display:none" alt="">
+
+<img id="weaponSwordSprite" src="assets/images/weapon_sword.png" style="display:none" alt="">
+<img id="weaponFireSprite" src="assets/images/weapon_firesword.png" style="display:none" alt="">
+<img id="weaponIceSprite" src="assets/images/weapon_icesword.png" style="display:none" alt="">
+<img id="weaponStaffSprite" src="assets/images/weapon_staff.png" style="display:none" alt="">
+<img id="weaponApocalypseSprite" src="assets/images/weapon_apocalypse.png" style="display:none" alt="">
 
 <img id="heroSwordIdle" src="assets/images/guardian_sword_idle.png" style="display:none" alt="">
 <img id="heroSwordAttack" src="assets/images/guardian_sword_attack.png" style="display:none" alt="">
@@ -132,6 +139,14 @@ const images = {
   cleanFactory: document.getElementById('factoryCleanBg'),
   core: document.getElementById('coreSprite'),
   tree: document.getElementById('treeSprite'),
+  uiSheet: document.getElementById('uiIconSheet'),
+  weapon: {
+    sword: document.getElementById('weaponSwordSprite'),
+    firesword: document.getElementById('weaponFireSprite'),
+    icesword: document.getElementById('weaponIceSprite'),
+    staff: document.getElementById('weaponStaffSprite'),
+    apocalypse: document.getElementById('weaponApocalypseSprite')
+  },
   hero: {
     sword: {
       idle: document.getElementById('heroSwordIdle'),
@@ -212,7 +227,9 @@ const state = {
   slashes: [],
   waveIntro: 0,
   treeTier: 1,
-  shopButtonRect: { x: 322, y: 590, w: 94, h: 40 }
+  shopButtonRect: { x: 322, y: 590, w: 94, h: 40 },
+  loadoutButtonRect: { x: 18, y: 574, w: 70, h: 54 },
+  loadoutOpen: false
 };
 
 const keys = {};
@@ -456,6 +473,7 @@ function resetGame() {
   state.stats.co2 = 0;
   state.stats.toxin = 0;
   state.shopOpen = false;
+  state.loadoutOpen = false;
   seedInitialTrees();
   spawnPollutionPatches();
 }
@@ -905,6 +923,201 @@ function enemyBobAmount(type) {
   return CONFIG.visual.bob[type] || 0.7;
 }
 
+function weaponGlyphType(id) {
+  if (id === 'firesword') return 'flameSword';
+  if (id === 'icesword') return 'iceSword';
+  if (id === 'staff') return 'staff';
+  return 'sword';
+}
+
+function sheetIconRect(name) {
+  const cellW = 357;
+  const cellH = 551;
+  const map = {
+    seed: [0, 0],
+    sword: [1, 0],
+    burst: [2, 0],
+    bag: [3, 0],
+    heart: [0, 1],
+    core: [1, 1],
+    coin: [2, 1],
+    toxin: [3, 1],
+    co2: [0, 0],
+    potion: [3, 0]
+  };
+  const rc = map[name];
+  if (!rc) return null;
+  return { sx: rc[0] * cellW, sy: rc[1] * cellH, sw: cellW, sh: cellH };
+}
+
+function drawSheetIcon(name, x, y, size) {
+  const img = images.uiSheet;
+  const rect = sheetIconRect(name);
+  if (!imageReady(img) || !rect) return false;
+  ctx.drawImage(img, rect.sx, rect.sy, rect.sw, rect.sh, x - size / 2, y - size / 2, size, size);
+  return true;
+}
+
+function drawWeaponThumb(id, x, y, w, h) {
+  const img = images.weapon[id];
+  if (!imageReady(img)) return false;
+  const scale = Math.min((w * 0.9) / img.width, (h * 0.9) / img.height);
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  return true;
+}
+
+function weaponDetailLines(id) {
+  if (id === 'firesword') return ['Heavy slash', 'Burn over time', 'Close splash hit'];
+  if (id === 'icesword') return ['Heavy slash', 'Slow on hit', 'Safer crowd control'];
+  if (id === 'staff') return ['Ranged twin bolts', 'Burn and slow', 'Best reach option'];
+  return ['Fast sword slash', 'Stable early weapon', 'Reliable single target'];
+}
+
+function drawUiGlyph(type, x, y, size, color = '#ffffff') {
+  if (drawSheetIcon(type, x, y, size)) return;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = Math.max(2, size * 0.08);
+  switch (type) {
+    case 'co2':
+      ctx.beginPath();
+      ctx.arc(-size * 0.12, 0, size * 0.16, 0, Math.PI * 2);
+      ctx.arc(size * 0.04, -size * 0.05, size * 0.2, 0, Math.PI * 2);
+      ctx.arc(size * 0.24, 0, size * 0.14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.clearRect(-size * 0.42, size * 0.05, size * 0.84, size * 0.28);
+      ctx.fillRect(-size * 0.34, size * 0.02, size * 0.68, size * 0.18);
+      break;
+    case 'toxin':
+      ctx.beginPath();
+      ctx.moveTo(0, -size * 0.34);
+      ctx.quadraticCurveTo(size * 0.3, -size * 0.05, size * 0.18, size * 0.22);
+      ctx.quadraticCurveTo(size * 0.08, size * 0.38, 0, size * 0.4);
+      ctx.quadraticCurveTo(-size * 0.08, size * 0.38, -size * 0.18, size * 0.22);
+      ctx.quadraticCurveTo(-size * 0.3, -size * 0.05, 0, -size * 0.34);
+      ctx.fill();
+      break;
+    case 'heart':
+      ctx.beginPath();
+      ctx.moveTo(0, size * 0.34);
+      ctx.bezierCurveTo(size * 0.42, size * 0.08, size * 0.42, -size * 0.22, 0, -size * 0.06);
+      ctx.bezierCurveTo(-size * 0.42, -size * 0.22, -size * 0.42, size * 0.08, 0, size * 0.34);
+      ctx.fill();
+      break;
+    case 'core':
+      ctx.beginPath();
+      ctx.moveTo(0, -size * 0.36);
+      ctx.lineTo(size * 0.24, 0);
+      ctx.lineTo(0, size * 0.36);
+      ctx.lineTo(-size * 0.24, 0);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    case 'coin':
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.26, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.14, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    case 'wave':
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(-size * 0.25 + i * size * 0.25, 0, size * 0.07, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    case 'seed':
+      ctx.beginPath();
+      ctx.ellipse(0, size * 0.02, size * 0.15, size * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, size * 0.18);
+      ctx.lineTo(0, size * 0.38);
+      ctx.stroke();
+      break;
+    case 'burst':
+      for (let i = 0; i < 8; i++) {
+        const a = i / 8 * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * size * 0.1, Math.sin(a) * size * 0.1);
+        ctx.lineTo(Math.cos(a) * size * 0.34, Math.sin(a) * size * 0.34);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case 'shopcart':
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.24, -size * 0.1);
+      ctx.lineTo(-size * 0.12, -size * 0.1);
+      ctx.lineTo(-size * 0.03, size * 0.1);
+      ctx.lineTo(size * 0.2, size * 0.1);
+      ctx.lineTo(size * 0.25, -size * 0.05);
+      ctx.lineTo(-size * 0.08, -size * 0.05);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(-size * 0.02, size * 0.2, size * 0.05, 0, Math.PI * 2);
+      ctx.arc(size * 0.16, size * 0.2, size * 0.05, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case 'bag':
+      ctx.strokeRect(-size * 0.22, -size * 0.1, size * 0.44, size * 0.36);
+      ctx.beginPath();
+      ctx.arc(0, -size * 0.08, size * 0.14, Math.PI, 0);
+      ctx.stroke();
+      break;
+    case 'potion':
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.14, -size * 0.24);
+      ctx.lineTo(size * 0.14, -size * 0.24);
+      ctx.lineTo(size * 0.08, -size * 0.1);
+      ctx.lineTo(size * 0.16, size * 0.18);
+      ctx.quadraticCurveTo(0, size * 0.34, -size * 0.16, size * 0.18);
+      ctx.lineTo(-size * 0.08, -size * 0.1);
+      ctx.closePath();
+      ctx.stroke();
+      break;
+    case 'staff':
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.22, size * 0.28);
+      ctx.lineTo(size * 0.14, -size * 0.24);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(size * 0.2, -size * 0.28, size * 0.1, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    case 'flameSword':
+    case 'iceSword':
+    case 'sword':
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.22, size * 0.28);
+      ctx.lineTo(size * 0.18, -size * 0.22);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.1, size * 0.12);
+      ctx.lineTo(size * 0.04, size * 0.02);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.24, size * 0.3);
+      ctx.lineTo(-size * 0.08, size * 0.18);
+      ctx.stroke();
+      break;
+    default:
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+  }
+  ctx.restore();
+}
+
 function drawBackground() {
   if (imageReady(images.map)) ctx.drawImage(images.map, 0, 0, CONFIG.width, CONFIG.height);
   else {
@@ -1176,160 +1389,151 @@ function drawParticles() {
 
 function drawHud() {
   const hero = state.hero;
-  const co2Target = 180;
-  const toxinTarget = 240;
   const canAffordShop = hasAffordableShopItem();
 
-  function meter(x, y, w, h, label, value, maxValue, fill, suffix = '') {
-    ctx.fillStyle = 'rgba(7, 12, 10, 0.78)';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(236, 255, 238, 0.16)';
-    ctx.strokeRect(x, y, w, h);
-    ctx.fillStyle = '#eefcf0';
-    ctx.font = '12px sans-serif';
-    ctx.fillText(label, x + 10, y + 15);
-    ctx.textAlign = 'right';
-    ctx.fillText(`${Math.round(value)}${suffix}`, x + w - 10, y + 15);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(x + 10, y + 22, w - 20, 8);
-    ctx.fillStyle = fill;
-    ctx.fillRect(x + 10, y + 22, (w - 20) * clamp(value / maxValue, 0, 1), 8);
-  }
+  function avatarBar(x, y, avatarType, value, maxValue, fill, label, suffix = '') {
+    const size = 42;
+    ctx.fillStyle = 'rgba(7, 12, 10, 0.34)';
+    ctx.fillRect(x, y, 228, 42);
+    ctx.strokeStyle = 'rgba(236, 255, 238, 0.12)';
+    ctx.strokeRect(x, y, 228, 42);
 
-  function skillCard(x, y, w, h, keyLabel, label, fillRatio, ready, tone) {
-    ctx.fillStyle = 'rgba(7, 12, 10, 0.82)';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = ready ? tone : 'rgba(180, 145, 120, 0.8)';
-    ctx.strokeRect(x, y, w, h);
-    ctx.fillStyle = ready ? tone : 'rgba(180, 145, 120, 0.75)';
-    ctx.fillRect(x + 7, y + 7, 24, 24);
-    ctx.fillStyle = '#102014';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillText(keyLabel, x + 14, y + 24);
-    ctx.fillStyle = '#f4fff5';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.fillText(label, x + 38, y + 17);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(x + 38, y + 23, w - 48, 8);
-    ctx.fillStyle = ready ? tone : '#d2a384';
-    ctx.fillRect(x + 38, y + 23, (w - 48) * clamp(fillRatio, 0, 1), 8);
-  }
-
-  meter(16, 14, 188, 38, 'CO2', state.stats.co2, co2Target, '#8de38c', ' kg');
-  meter(214, 14, 188, 38, 'Toxin', state.stats.toxin, toxinTarget, '#9de0ff', ' u');
-
-  ctx.fillStyle = 'rgba(7, 12, 10, 0.78)';
-  ctx.fillRect(412, 14, 430, 54);
-  ctx.fillStyle = '#f1fff2';
-  ctx.font = '12px sans-serif';
-  ctx.fillText(`Wave ${Math.max(1, state.waveIndex + 1)} / 3`, 424, 30);
-  ctx.fillText(`Coins ${state.coins}`, 510, 30);
-  ctx.fillText(CONFIG.weapons[state.currentWeapon].name, 590, 30);
-  ctx.fillText(`Lives ${Math.max(hero.lives, 0)}`, 716, 30);
-  for (let i = 0; i < 3; i++) {
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(804 + i * 12, 29, 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = i < state.waveIndex ? '#7fe4a3' : i === state.waveIndex ? '#ffd56f' : 'rgba(255,255,255,0.18)';
-    ctx.fill();
-  }
-  meter(424, 34, 156, 24, 'Hero HP', hero.hp, hero.maxHp, '#85df8f');
-  meter(594, 34, 156, 24, 'Core HP', state.core.hp, CONFIG.core.maxHp, '#7fe4d0');
+    ctx.arc(x + 22, y + 21, 17, 0, Math.PI * 2);
+    ctx.clip();
+    if (avatarType === 'hero') {
+      const img = images.hero[state.currentWeapon]?.idle || images.hero.sword.idle;
+      if (imageReady(img)) {
+        const s = Math.min((size * 1.15) / img.width, (size * 1.15) / img.height);
+        const dw = img.width * s;
+        const dh = img.height * s;
+        ctx.drawImage(img, x + 22 - dw / 2, y + 21 - dh / 2 + 2, dw, dh);
+      } else {
+        drawUiGlyph('heart', x + 22, y + 21, 20, '#8fe09a');
+      }
+    } else {
+      if (imageReady(images.core)) {
+        const img = images.core;
+        const s = Math.min((size * 0.9) / img.width, (size * 0.9) / img.height);
+        const dw = img.width * s;
+        const dh = img.height * s;
+        ctx.drawImage(img, x + 22 - dw / 2, y + 21 - dh / 2 + 2, dw, dh);
+      } else {
+        drawUiGlyph('core', x + 22, y + 21, 20, '#7fe4ff');
+      }
+    }
+    ctx.restore();
 
-  const attackReady = 1 - clamp(hero.attackCd / CONFIG.hero.attackCd, 0, 1);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.arc(x + 22, y + 21, 17, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(244,252,246,0.96)';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, x + 48, y + 15);
+    ctx.fillStyle = '#eefcf0';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${Math.round(value)}${suffix}`, x + 216, y + 16);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(x + 48, y + 24, 168, 8);
+    ctx.fillStyle = fill;
+    ctx.fillRect(x + 48, y + 24, 168 * clamp(value / maxValue, 0, 1), 8);
+  }
+
+  function skillOrb(x, y, keyLabel, icon, progress, tone) {
+    const ready = progress >= 0.999;
+    const radius = 34;
+    ctx.save();
+    ctx.shadowColor = ready ? tone : 'transparent';
+    ctx.shadowBlur = ready ? 22 : 0;
+    ctx.fillStyle = 'rgba(8, 12, 10, 0.28)';
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = tone;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(progress, 0, 1));
+    ctx.stroke();
+    ctx.restore();
+
+    drawUiGlyph(icon, x, y, 36, ready ? tone : '#f0f5f0');
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(keyLabel, x, y + 56);
+    ctx.textAlign = 'left';
+  }
+
+  avatarBar(16, 14, 'hero', hero.hp, hero.maxHp, '#98e58f', 'HERO');
+  avatarBar(16, 60, 'core', state.core.hp, CONFIG.core.maxHp, '#77e3ff', 'CORE');
+
+  function resourcePill(x, y, w, icon, value, tone) {
+    ctx.fillStyle = 'rgba(7, 12, 10, 0.32)';
+    ctx.fillRect(x, y, w, 34);
+    ctx.strokeStyle = 'rgba(236,255,238,0.12)';
+    ctx.strokeRect(x, y, w, 34);
+    drawUiGlyph(icon, x + 20, y + 17, 24, tone);
+    ctx.fillStyle = '#f6fff7';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(value), x + 40, y + 22);
+    ctx.textAlign = 'left';
+  }
+
+  resourcePill(1028, 14, 74, 'coin', state.coins, '#ffe08b');
+  resourcePill(1110, 14, 74, 'heart', Math.max(hero.lives, 0), '#ff8e8e');
+
   const plantReady = 1 - clamp(hero.plantCd / CONFIG.hero.plantCd, 0, 1);
   const ultCdReady = 1 - clamp(hero.ultCd / CONFIG.hero.ultCd, 0, 1);
   const ultHpReady = clamp((hero.hp / hero.maxHp - 0.6) / 0.4, 0, 1);
   const ultReady = Math.min(ultCdReady, hero.hp / hero.maxHp >= 0.6 ? 1 : ultHpReady);
-  const dockY = 590;
-  skillCard(16, dockY, 94, 40, 'F', 'Plant', plantReady, hero.plantCd <= 0 && !hero.isDown, '#8fe09a');
-  skillCard(118, dockY, 94, 40, 'J', 'Skill', attackReady, hero.attackCd <= 0 && !hero.isDown, '#8fd6ff');
-  skillCard(220, dockY, 94, 40, 'K', 'Ultimate', ultReady, hero.ultCd <= 0 && hero.hp / hero.maxHp >= 0.6 && !hero.isDown, '#ffd783');
-  skillCard(322, dockY, 94, 40, 'B', 'Shop', state.shopOpen ? 1 : canAffordShop ? 1 : 0.35, true, canAffordShop ? '#ffe08b' : '#d5c3ff');
+  skillOrb(62, 572, 'F', 'seed', plantReady, '#8fe09a');
+  skillOrb(146, 572, 'K', 'burst', ultReady, '#ffd783');
 
-  if (state.waveState === 'break' && state.phase === 'playing') {
-    ctx.fillStyle = 'rgba(12, 18, 16, 0.68)';
-    ctx.fillRect(360, 590, 480, 38);
-    ctx.fillStyle = '#d9ffd1';
-    ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`Plant during the break: move to the polluted zone and press F`, 600, 616);
-    ctx.textAlign = 'left';
-  }
+  const shopCx = 1140;
+  const shopCy = 600;
+  const shopReady = canAffordShop || state.shopOpen;
+  ctx.save();
+  ctx.shadowColor = shopReady ? 'rgba(255, 214, 110, 0.85)' : 'transparent';
+  ctx.shadowBlur = shopReady ? 20 : 0;
+  ctx.fillStyle = 'rgba(12, 16, 14, 0.38)';
+  ctx.beginPath();
+  ctx.arc(shopCx, shopCy, 28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = shopReady ? 'rgba(255, 224, 139, 0.9)' : 'rgba(236,255,238,0.18)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(shopCx, shopCy, 28, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+  drawUiGlyph('shopcart', shopCx, shopCy - 1, 24, shopReady ? '#ffe08b' : '#f0e7da');
+  ctx.fillStyle = '#effff2';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Shop', shopCx, shopCy + 44);
+  ctx.textAlign = 'left';
+
+  state.shopButtonRect = { x: shopCx - 28, y: shopCy - 28, w: 56, h: 56 };
+  state.loadoutButtonRect = null;
+
 }
 
 function drawWaveOverlay() {
-  if (state.phase !== 'playing') return;
-  if (state.waveState === 'break') {
-    const total = CONFIG.breakDuration;
-    const pct = clamp(state.waveTimer / total, 0, 1);
-    ctx.fillStyle = 'rgba(5, 10, 8, 0.76)';
-    ctx.fillRect(350, 72, 500, 54);
-    ctx.strokeStyle = 'rgba(225,255,230,0.22)';
-    ctx.strokeRect(350, 72, 500, 54);
-    ctx.fillStyle = '#edfdee';
-    ctx.font = 'bold 20px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`Next Wave in ${Math.ceil(state.waveTimer)}s`, 600, 96);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(382, 106, 436, 10);
-    ctx.fillStyle = '#8ce39a';
-    ctx.fillRect(382, 106, 436 * pct, 10);
-    ctx.textAlign = 'left';
-  }
-  if (state.waveState === 'fighting') {
-    const spawned = state.waveQueue.length;
-    const alive = state.enemies.filter(e => !e.dead && e.hp > 0).length;
-    const total = Object.values(CONFIG.waves[state.waveIndex] || {}).reduce((a, b) => a + b, 0) || 1;
-    const resolved = clamp((total - spawned - alive) / total, 0, 1);
-    ctx.fillStyle = 'rgba(5, 10, 8, 0.72)';
-    ctx.fillRect(392, 72, 416, 36);
-    ctx.strokeStyle = 'rgba(225,255,230,0.16)';
-    ctx.strokeRect(392, 72, 416, 36);
-    ctx.fillStyle = '#f3fff3';
-    ctx.font = 'bold 15px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`Wave ${state.waveIndex + 1} progress`, 600, 90);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(412, 96, 376, 7);
-    ctx.fillStyle = '#9be889';
-    ctx.fillRect(412, 96, 376 * resolved, 7);
-    ctx.textAlign = 'left';
-  }
-  if (state.waveIntro > 0) {
-    const pct = clamp(state.waveIntro / 1.6, 0, 1);
-    const alpha = 0.25 + pct * 0.45;
-    const bannerW = 620;
-    const bannerX = (CONFIG.width - bannerW) / 2;
-    const bannerY = 156;
-    ctx.fillStyle = `rgba(8, 12, 16, ${0.68 * alpha})`;
-    ctx.fillRect(bannerX, bannerY, bannerW, 124);
-    ctx.strokeStyle = `rgba(255, 241, 188, ${0.38 * alpha})`;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(bannerX, bannerY, bannerW, 124);
-    ctx.fillStyle = '#fff5c8';
-    ctx.font = 'bold 58px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`WAVE ${state.waveIndex + 1}`, 600, 214);
-    ctx.fillStyle = '#fff8e2';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText(state.waveIndex === 1 ? 'Mini Boss incoming' : state.waveIndex === 2 ? 'Final assault incoming' : 'Defend the Pure Core', 600, 248);
-    ctx.fillStyle = 'rgba(255,255,255,0.14)';
-    ctx.fillRect(430, 262, 340, 12);
-    ctx.fillStyle = '#ffd56f';
-    ctx.fillRect(430, 262, 340 * (1 - pct), 12);
-    ctx.textAlign = 'left';
-  }
+  return;
 }
 
 function drawMessages() {
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 20px sans-serif';
-  for (const m of state.messages) {
-    ctx.fillStyle = m.color;
-    ctx.fillText(m.text, CONFIG.width / 2, m.y);
-  }
-  ctx.textAlign = 'left';
+  return;
 }
 
 function drawShop() {
@@ -1344,7 +1548,8 @@ function drawShop() {
   ctx.fillText('Field Armory', 600, 108);
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#ffd17f';
-  ctx.fillText(`Coins: ${state.coins}`, 600, 132);
+  drawUiGlyph('coin', 540, 128, 18, '#ffe08b');
+  ctx.fillText(`${state.coins}`, 590, 132);
   const ids = ['firesword', 'icesword', 'staff'];
   ids.forEach((id, i) => {
     const weapon = CONFIG.weapons[id];
@@ -1359,18 +1564,26 @@ function drawShop() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 16px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(weapon.name, x + 14, y + 24);
+    drawWeaponThumb(id, x + 8, y + 8, 64, 42);
+    ctx.fillText(weapon.name, x + 74, y + 24);
     ctx.font = '13px sans-serif';
-    ctx.fillText(`Damage: ${weapon.dmg}`, x + 14, y + 52);
-    ctx.fillText(weapon.projectile ? 'Attack: Dual arc projectile' : 'Attack: Sword slash', x + 14, y + 74);
-    if (weapon.burn) ctx.fillText(`Burn: ${weapon.burn}/s`, x + 14, y + 96);
-    if (weapon.slow) ctx.fillText(`Slow: ${Math.round(weapon.slow * 100)}%`, x + 14, y + 118);
+    drawUiGlyph('burst', x + 24, y + 58, 16, '#ffefc2');
+    ctx.fillText(`${weapon.dmg}`, x + 42, y + 62);
+    if (weapon.burn) {
+      drawUiGlyph('flameSword', x + 24, y + 88, 15, '#ff9a57');
+      ctx.fillText(`${weapon.burn}/s`, x + 42, y + 92);
+    }
+    if (weapon.slow) {
+      drawUiGlyph('iceSword', x + 24, y + 116, 15, '#a8e6ff');
+      ctx.fillText(`${Math.round(weapon.slow * 100)}%`, x + 42, y + 120);
+    }
     ctx.fillStyle = owned ? '#d8ffe1' : affordable ? '#ffe08b' : '#c2b6ad';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(owned ? (state.currentWeapon === id ? 'Equipped' : 'Owned') : `Cost: ${weapon.unlockCost}`, x + 14, y + 154);
+    drawUiGlyph('coin', x + 24, y + 148, 15, owned ? '#d8ffe1' : '#ffe08b');
+    ctx.fillText(owned ? (state.currentWeapon === id ? 'Equipped' : 'Owned') : `${weapon.unlockCost}`, x + 42, y + 152);
     ctx.fillStyle = owned ? '#e7fff0' : affordable ? '#fff5d2' : '#d6cfc7';
     ctx.font = 'bold 13px sans-serif';
-    ctx.fillText(owned ? (state.currentWeapon === id ? 'Active now' : 'Click to equip') : affordable ? 'Click to buy' : 'Not enough coins', x + 14, y + 172);
+    ctx.fillText(owned ? (state.currentWeapon === id ? 'Active' : 'Equip') : affordable ? 'Buy' : 'Locked', x + 14, y + 172);
     weapon._shopRect = { x, y, w: 224, h: 178 };
   });
   const treeCards = [
@@ -1389,20 +1602,68 @@ function drawShop() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 16px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(card.label, x + 14, y + 24);
+    drawUiGlyph('seed', x + 24, y + 22, 20, '#9fe6a2');
+    ctx.fillText(card.label, x + 42, y + 24);
     ctx.font = '13px sans-serif';
-    ctx.fillText(card.desc1, x + 14, y + 50);
-    ctx.fillText(card.desc2, x + 14, y + 72);
+    drawUiGlyph('heart', x + 24, y + 48, 14, '#ff8f8f');
+    ctx.fillText(card.tier === 2 ? '+50% tree HP' : '+100% tree HP', x + 42, y + 52);
+    drawUiGlyph('co2', x + 24, y + 72, 14, '#8de38c');
+    ctx.fillText(card.tier === 2 ? 'x1.5 cleanse' : 'x2.0 cleanse', x + 42, y + 76);
     ctx.fillStyle = owned ? '#d8ffe1' : affordable ? '#ffe08b' : '#c2b6ad';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(owned ? 'Purchased' : `Cost: ${card.cost}`, x + 14, y + 98);
+    drawUiGlyph('coin', x + 24, y + 96, 15, owned ? '#d8ffe1' : '#ffe08b');
+    ctx.fillText(owned ? 'Purchased' : `${card.cost}`, x + 42, y + 100);
     card._shopRect = { x, y, w: 240, h: 116 };
     state[card.id + 'Rect'] = card._shopRect;
   });
   ctx.textAlign = 'center';
   ctx.fillStyle = '#c0e6c6';
   ctx.font = '14px sans-serif';
-  ctx.fillText('Click a card to unlock, equip, or upgrade. Press B to close the armory.', 600, 516);
+  ctx.fillText('Click a card to buy or equip. Press B to close.', 600, 516);
+  ctx.textAlign = 'left';
+}
+
+function drawLoadoutPanel() {
+  if (!state.loadoutOpen || state.phase !== 'playing') return;
+  ctx.fillStyle = 'rgba(5, 10, 8, 0.86)';
+  ctx.fillRect(190, 94, 820, 430);
+  ctx.strokeStyle = '#84c993';
+  ctx.strokeRect(190, 94, 820, 430);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#effff1';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText('Loadout', 600, 128);
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = '#d7f5dc';
+  ctx.fillText('Press Q to close. Click an owned weapon to equip it.', 600, 154);
+
+  const ids = ['sword', 'firesword', 'icesword', 'staff'];
+  ids.forEach((id, i) => {
+    const x = 228 + i * 192;
+    const y = 184;
+    const owned = state.ownedWeapons.includes(id);
+    const active = state.currentWeapon === id;
+    ctx.fillStyle = active ? 'rgba(58, 110, 64, 0.92)' : owned ? 'rgba(42, 64, 46, 0.92)' : 'rgba(24, 28, 26, 0.94)';
+    ctx.fillRect(x, y, 164, 268);
+    ctx.strokeStyle = active ? '#fff0a2' : owned ? CONFIG.weapons[id].slash : 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = active ? 2 : 1.5;
+    ctx.strokeRect(x, y, 164, 268);
+    drawWeaponThumb(id, x + 18, y + 16, 128, 84);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(CONFIG.weapons[id].name, x + 14, y + 116);
+    ctx.font = '13px sans-serif';
+    drawUiGlyph('burst', x + 22, y + 142, 16, '#ffefc2');
+    ctx.fillText(`${CONFIG.weapons[id].dmg} damage`, x + 38, y + 146);
+    const lines = weaponDetailLines(id);
+    lines.forEach((line, idx) => ctx.fillText(line, x + 14, y + 174 + idx * 22));
+    ctx.fillStyle = active ? '#fff3bf' : owned ? '#d9ffe1' : '#c9c0b6';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(active ? 'Equipped' : owned ? 'Owned' : 'Locked', x + 14, y + 248);
+    CONFIG.weapons[id]._loadoutRect = { x, y, w: 164, h: 268 };
+  });
+
   ctx.textAlign = 'left';
 }
 
@@ -1539,11 +1800,11 @@ function drawPlaying() {
   drawEnemies();
   drawHero();
   drawSlashes();
-  drawParticles();
+    drawParticles();
   ctx.restore();
   drawHud();
-  drawWaveOverlay();
   drawMessages();
+  drawLoadoutPanel();
   drawShop();
 }
 
@@ -1624,6 +1885,24 @@ function handleShopClick(mx, my) {
   return false;
 }
 
+function handleLoadoutClick(mx, my) {
+  const ids = ['sword', 'firesword', 'icesword', 'staff'];
+  for (const id of ids) {
+    const rect = CONFIG.weapons[id]._loadoutRect;
+    if (!rect) continue;
+    if (mx > rect.x && mx < rect.x + rect.w && my > rect.y && my < rect.y + rect.h) {
+      if (!state.ownedWeapons.includes(id)) {
+        addMessage('Weapon is locked', '#ffb093');
+        return true;
+      }
+      state.currentWeapon = id;
+      addMessage(`${CONFIG.weapons[id].name} equipped`, CONFIG.weapons[id].slash);
+      return true;
+    }
+  }
+  return false;
+}
+
 canvas.addEventListener('click', evt => {
   sound.unlock();
   const { x, y } = clickPoint(evt);
@@ -1647,12 +1926,20 @@ canvas.addEventListener('click', evt => {
     return;
   }
   if (state.phase === 'playing') {
+    const loadoutRect = state.loadoutButtonRect;
+    if (loadoutRect && x > loadoutRect.x && x < loadoutRect.x + loadoutRect.w && y > loadoutRect.y && y < loadoutRect.y + loadoutRect.h) {
+      state.loadoutOpen = !state.loadoutOpen;
+      if (state.loadoutOpen) state.shopOpen = false;
+      return;
+    }
     const r = state.shopButtonRect;
-    if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) {
+    if (r && x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) {
       state.shopOpen = !state.shopOpen;
+      if (state.shopOpen) state.loadoutOpen = false;
       return;
     }
   }
+  if (state.loadoutOpen && handleLoadoutClick(x, y)) return;
   if (state.shopOpen && handleShopClick(x, y)) return;
 });
 
@@ -1663,7 +1950,14 @@ window.addEventListener('keydown', evt => {
   if (evt.code === 'KeyF' && state.phase === 'playing') heroPlant();
   if (evt.code === 'KeyJ' && state.phase === 'playing') heroAttack();
   if (evt.code === 'KeyK' && state.phase === 'playing') heroUltimate();
-  if (evt.code === 'KeyB' && state.phase === 'playing') state.shopOpen = !state.shopOpen;
+  if (evt.code === 'KeyQ' && state.phase === 'playing') {
+    state.loadoutOpen = !state.loadoutOpen;
+    if (state.loadoutOpen) state.shopOpen = false;
+  }
+  if (evt.code === 'KeyB' && state.phase === 'playing') {
+    state.shopOpen = !state.shopOpen;
+    if (state.shopOpen) state.loadoutOpen = false;
+  }
   if (evt.code === 'KeyM') sound.toggle();
 });
 
