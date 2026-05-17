@@ -88,6 +88,19 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// roundRect polyfill for older browsers
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    this.moveTo(x + r, y);
+    this.arcTo(x + w, y, x + w, y + h, r);
+    this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r);
+    this.arcTo(x, y, x + w, y, r);
+    this.closePath();
+  };
+}
+
 const CONFIG = {
   width: 1200,
   height: 650,
@@ -182,7 +195,7 @@ const images = {
 };
 
 const audioFiles = {
-  bgm: 'assets/audio/bgm_sanctuary_loop.wav',
+  bgm: 'assets/audio/bgm_sanctuary_loop.mp3',
   plant: 'assets/audio/sfx_plant.wav',
   skill: 'assets/audio/sfx_skill.wav',
   ultimate: 'assets/audio/sfx_ultimate.wav',
@@ -193,6 +206,7 @@ const audioFiles = {
   coin: 'assets/audio/sfx_coin.wav',
   spawn: 'assets/audio/sfx_spawn.wav',
   victory: 'assets/audio/stinger_victory.wav',
+  victoryBgm: 'assets/audio/bgm_victory.mp3',
   gameover: 'assets/audio/stinger_gameover.wav'
 };
 
@@ -201,7 +215,12 @@ const state = {
   hero: null,
   core: { hp: CONFIG.core.maxHp },
   trees: [],
+  sprites: [],
+  coreSpriteTimer: 0,
   enemies: [],
+  smokeParticles: [],
+  twisters: [],
+  ultPulses: [],
   projectiles: [],
   particles: [],
   messages: [],
@@ -229,8 +248,659 @@ const state = {
   treeTier: 1,
   shopButtonRect: { x: 322, y: 590, w: 94, h: 40 },
   loadoutButtonRect: { x: 18, y: 574, w: 70, h: 54 },
-  loadoutOpen: false
+  loadoutOpen: false,
+  quizState: null,       // null | { questions, qIndex, selected, phase, timer, pendingRewards }
+  activeCharms: [],      // [{ id, ttl }]
+  heldArtifacts: [],     // artifact IDs held by player, triggered manually
+  wrongAnswers: []       // { text, correctOption, explanation } collected across all quizzes
 };
+
+// ─── Eco Quiz Data ───────────────────────────────────────────────────────────
+// Wave 2: Easy questions — 1 point each
+const QUIZ_POOL_EASY = [
+  {
+    text: 'What is the main cause of global warming?',
+    options: ['Farting too much', 'Volcano eruption', 'Burning fossil fuels'],
+    correct: 2,
+    explanation: 'Burning fossil fuels releases CO₂, the main driver of global warming.'
+  },
+  {
+    text: 'Which gas is most responsible for the greenhouse effect?',
+    options: ['Oxygen', 'Carbon dioxide', 'Nitrogen'],
+    correct: 1,
+    explanation: 'CO₂ traps heat in the atmosphere, causing the Earth to warm up.'
+  },
+  {
+    text: 'What does "going green" mean?',
+    options: ['Painting your house green', 'Adopting eco-friendly habits', 'Eating more vegetables'],
+    correct: 1,
+    explanation: '"Going green" means making choices that reduce harm to the environment.'
+  },
+  {
+    text: 'Which of these is a renewable energy source?',
+    options: ['Coal', 'Natural gas', 'Solar power'],
+    correct: 2,
+    explanation: 'Solar power comes from the sun — it never runs out and produces no CO₂.'
+  },
+  {
+    text: 'What is the purpose of recycling?',
+    options: ['To make garbage look nicer', 'To reuse materials and reduce waste', 'To burn trash more efficiently'],
+    correct: 1,
+    explanation: 'Recycling converts waste into reusable materials, saving energy and resources.'
+  },
+  {
+    text: 'Which action saves the most water at home?',
+    options: ['Leaving the tap running while brushing teeth', 'Taking shorter showers', 'Washing dishes by hand always'],
+    correct: 1,
+    explanation: 'A running tap wastes 6L per minute — shorter showers save thousands of litres yearly.'
+  },
+  {
+    text: 'What is deforestation?',
+    options: ['Planting more trees', 'Clearing forests for other uses', 'A type of plant disease'],
+    correct: 1,
+    explanation: 'Deforestation removes forests, releasing stored CO₂ and destroying habitats.'
+  },
+  {
+    text: 'Which transport produces the least CO₂ per person?',
+    options: ['Driving alone in a car', 'Flying in a plane', 'Riding a bicycle'],
+    correct: 2,
+    explanation: 'Bicycles produce zero emissions — the most eco-friendly way to travel.'
+  },
+  {
+    text: 'What happens when sea ice melts due to global warming?',
+    options: ['Sea levels drop', 'Sea levels rise', 'The ocean gets saltier'],
+    correct: 1,
+    explanation: 'Melting land ice (like glaciers) adds water to the ocean, raising sea levels.'
+  },
+  {
+    text: 'Which of these reduces your carbon footprint?',
+    options: ['Eating less meat', 'Buying more plastic products', 'Leaving electronics on standby'],
+    correct: 0,
+    explanation: 'Meat production generates large amounts of greenhouse gases — eating less helps significantly.'
+  }
+];
+
+// Wave 3: Hard questions — 2 points each
+const QUIZ_POOL_HARD = [
+  {
+    text: 'Which country emits the most CO₂ in total?',
+    options: ['USA', 'China', 'India'],
+    correct: 1,
+    explanation: 'China is currently the world\'s largest CO₂ emitter, mainly from coal-powered electricity.'
+  },
+  {
+    text: 'Rising sea levels threaten which of these most directly?',
+    options: ['Mountain villages', 'Coastal cities', 'Desert towns'],
+    correct: 1,
+    explanation: 'Coastal cities like Miami and Shanghai face flooding as sea levels rise from melting ice.'
+  },
+  {
+    text: 'Which food has the biggest carbon footprint?',
+    options: ['Vegetables', 'Chicken', 'Beef'],
+    correct: 2,
+    explanation: 'Beef production releases far more greenhouse gases than any other food — cows emit methane.'
+  },
+  {
+    text: 'What warms the Earth faster — land or ocean?',
+    options: ['Land', 'Ocean', 'Both the same'],
+    correct: 0,
+    explanation: 'Land heats up about twice as fast as ocean because water absorbs and stores more heat.'
+  },
+  {
+    text: 'Forests cover about what fraction of Earth\'s land?',
+    options: ['One tenth', 'One third', 'One half'],
+    correct: 1,
+    explanation: 'Forests cover roughly one third of land, storing vast amounts of carbon in trees and soil.'
+  },
+  {
+    text: 'Which everyday habit wastes the most electricity?',
+    options: ['Leaving lights on', 'Leaving devices on standby', 'Charging phones overnight'],
+    correct: 1,
+    explanation: 'Devices on standby can account for up to 10% of home electricity use across a year.'
+  },
+  {
+    text: 'Melting Arctic ice affects weather because it changes what?',
+    options: ['Ocean salinity', 'Earth\'s reflectivity', 'Wind direction only'],
+    correct: 1,
+    explanation: 'White ice reflects sunlight. When it melts, dark ocean absorbs more heat, speeding up warming.'
+  },
+  {
+    text: 'Which lasts longer in the ocean — plastic bag or glass bottle?',
+    options: ['Plastic bag', 'Glass bottle', 'Both the same'],
+    correct: 1,
+    explanation: 'Glass can last a million years in the ocean. Plastic bags break into microplastics in 20 years.'
+  },
+  {
+    text: 'What is the biggest driver of wildlife habitat loss?',
+    options: ['Climate change', 'Land cleared for farming', 'Urban construction'],
+    correct: 1,
+    explanation: 'Agriculture accounts for about 80% of global deforestation and habitat destruction.'
+  },
+  {
+    text: 'Which renewable energy source is growing fastest worldwide?',
+    options: ['Wind power', 'Solar power', 'Hydropower'],
+    correct: 1,
+    explanation: 'Solar power installation has grown faster than any energy source in history over the last decade.'
+  }
+];
+
+// Quiz configuration per wave
+const QUIZ_CONFIG = [
+  { pool: QUIZ_POOL_EASY, pointsPerQ: 1, duration: 30, waveLabel: 'Wave 1 Cleared' },
+  { pool: QUIZ_POOL_HARD, pointsPerQ: 2, duration: 30, waveLabel: 'Wave 2 Cleared' }
+];
+
+// Score tiers per quiz wave. Each entry matches QUIZ_CONFIG index.
+// Wave 2 quiz (Easy, 1pt each — max ~3-4 pts in 10s)
+const SCORE_TIERS_WAVE2 = [
+  { minScore: 3, label: 'Outstanding!', color: '#ffe066', rewards: ['charm_purify_shield', 'artifact_cleanse_storm'],
+    desc: '🛡 Defense BOOST: trees healed + damage -30%\n⚡ Cleanse Storm: auto-deals 80 dmg to all enemies!' },
+  { minScore: 2, label: 'Great job!',   color: '#9fe6a2', rewards: ['artifact_cleanse_storm'],
+    desc: '⚡ Cleanse Storm unlocked — deals 80 damage to all enemies on the next wave!' },
+  { minScore: 1, label: 'Good try!',    color: '#7ec8e3', rewards: ['charm_purify_shield'],
+    desc: '🛡 Defense BOOST — all trees healed, incoming damage reduced 30% for 30s!' },
+  { minScore: 0, label: 'No bonus',     color: '#888',    rewards: [],
+    desc: 'No bonus this wave. Keep learning eco facts — you\'ll do better next time!' }
+];
+
+// Wave 3 quiz (Hard, 2pts each — max ~6-8 pts in 10s)
+const SCORE_TIERS_WAVE3 = [
+  { minScore: 6, label: 'Outstanding!', color: '#ffe066', rewards: ['charm_core_shield', 'artifact_freeze_field'],
+    desc: '💎 Core Shield: core HP +100, damage -50% for 20s\n❄ Freeze Field: press [E] to freeze all enemies for 5s!' },
+  { minScore: 4, label: 'Great job!',   color: '#a0e4ff', rewards: ['artifact_freeze_field'],
+    desc: '❄ Freeze Field ready! Press [E] during battle to freeze all enemies for 5 seconds!' },
+  { minScore: 2, label: 'Good try!',    color: '#7ec8e3', rewards: ['charm_core_shield'],
+    desc: '💎 Core Shield — core gains +100 HP and takes 50% less damage for 20 seconds!' },
+  { minScore: 0, label: 'No bonus',     color: '#888',    rewards: [],
+    desc: 'No bonus this wave. The Boss is coming — good luck!' }
+];
+
+const SCORE_TIERS_BY_WAVE = [SCORE_TIERS_WAVE2, SCORE_TIERS_WAVE3];
+
+// ─── Charm / Artifact Effects ─────────────────────────────────────────────────
+const CHARM_DEFS = {
+  charm_purify_shield: {
+    label: 'Purify Shield',
+    icon: '🛡',
+    color: '#9fe6a2',
+    desc: 'All trees restored & damage -30% for 30s',
+    apply(state) {
+      state.trees.forEach(t => { t.hp = Math.min(t.hp + t.maxHp, t.maxHp); });
+      state.activeCharms.push({ id: 'charm_purify_shield', ttl: 30 });
+    }
+  },
+  charm_core_shield: {
+    label: 'Core Shield',
+    icon: '💎',
+    color: '#7ec8e3',
+    desc: 'Core gains +100 HP & takes -50% damage for 20s',
+    apply(state) {
+      state.core.hp = Math.min(state.core.hp + 100, CONFIG.core.maxHp + 100);
+      state.activeCharms.push({ id: 'charm_core_shield', ttl: 20 });
+    }
+  },
+  artifact_cleanse_storm: {
+    label: 'Cleanse Storm',
+    icon: '⚡',
+    color: '#ffe066',
+    desc: 'Deals 80 damage to all enemies instantly!',
+    apply(state) {
+      state.enemies.forEach(e => {
+        if (!e.dead && e.hp > 0) {
+          e.hp -= 80;
+          if (e.hp <= 0) {
+            e.dead = true;
+            state.coins += CONFIG.enemies[e.type]?.reward ?? 5;
+            state.kills += 1;
+          }
+        }
+      });
+      // Visual burst
+      emitBurst(CONFIG.width / 2, CONFIG.height / 2, '#ffe066', 40);
+    }
+  },
+  artifact_freeze_field: {
+    label: 'Freeze Field',
+    icon: '❄',
+    color: '#a0e4ff',
+    desc: 'Press [E] to freeze all enemies for 5s!',
+    // Not auto-applied — stored in state.heldArtifacts and triggered by E key
+    apply(state) {
+      state.heldArtifacts = state.heldArtifacts || [];
+      state.heldArtifacts.push('artifact_freeze_field');
+      addMessage('❄ Freeze Field ready — press [E] to use!', '#a0e4ff', 3.0);
+    },
+    activate(state) {
+      state.activeCharms.push({ id: 'artifact_freeze_field', ttl: 5 });
+      emitBurst(CONFIG.width / 2, CONFIG.height / 2, '#a0e4ff', 30);
+    }
+  }
+};
+
+function applyCharm(id) {
+  const def = CHARM_DEFS[id];
+  if (!def) return;
+  def.apply(state);
+  if (id !== 'artifact_freeze_field') {
+    addMessage(`${def.icon} ${def.label} activated!`, def.color, 2.2);
+  }
+}
+
+function activateFreezeField() {
+  const held = state.heldArtifacts || [];
+  const idx = held.indexOf('artifact_freeze_field');
+  if (idx === -1) return;
+  if (hasCharm('artifact_freeze_field')) return;
+  held.splice(idx, 1);
+  CHARM_DEFS.artifact_freeze_field.activate(state);
+  addMessage('❄ Freeze Field activated! (5s)', '#a0e4ff', 2.2);
+}
+
+function updateActiveCharms(dt) {
+  state.activeCharms = state.activeCharms.filter(c => {
+    c.ttl -= dt;
+    return c.ttl > 0;
+  });
+}
+
+function hasCharm(id) {
+  return state.activeCharms.some(c => c.id === id);
+}
+
+// ─── Quiz State Machine ───────────────────────────────────────────────────────
+function shuffledPool(pool) {
+  return [...pool].sort(() => Math.random() - 0.5);
+}
+
+function startQuiz(configIndex) {
+  const cfg = QUIZ_CONFIG[configIndex];
+  state.quizState = {
+    configIndex,
+    pool: shuffledPool(cfg.pool),  // randomised question order
+    qIndex: 0,
+    selected: -1,
+    phase: 'asking',   // 'waiting' | 'asking' | 'result' | 'done'
+    countdownTimer: cfg.duration, // 10s total
+    resultTimer: 0,
+    doneTimer: 0,
+    score: 0,
+    answered: 0,
+    _optRects: []
+  };
+  state.shopOpen = false;
+  state.loadoutOpen = false;
+}
+
+function currentQuizQuestion() {
+  const qs = state.quizState;
+  if (!qs) return null;
+  return qs.pool[qs.qIndex % qs.pool.length];
+}
+
+function handleQuizAnswer(optionIndex) {
+  const qs = state.quizState;
+  if (!qs || qs.phase !== 'asking' || qs.selected !== -1) return;
+  qs.selected = optionIndex;
+  qs.phase = 'result';
+  qs.resultTimer = 1.0; // show result for 1s then auto-advance
+  const q = currentQuizQuestion();
+  if (optionIndex === q.correct) {
+    qs.score += QUIZ_CONFIG[qs.configIndex].pointsPerQ;
+  } else {
+    state.wrongAnswers.push({
+      text: q.text,
+      correctOption: q.options[q.correct],
+      explanation: q.explanation
+    });
+  }
+  qs.answered += 1;
+}
+
+function advanceQuizQuestion() {
+  const qs = state.quizState;
+  if (!qs) return;
+  if (qs.countdownTimer <= 0) {
+    finishQuiz();
+    return;
+  }
+  qs.qIndex += 1;
+  qs.selected = -1;
+  qs.phase = 'asking';
+  qs._optRects = [];
+}
+
+function finishQuiz() {
+  const qs = state.quizState;
+  if (!qs) return;
+  // If time ran out while a question was on screen and unanswered, record it as wrong
+  if (qs.phase === 'asking' && qs.selected === -1) {
+    const q = currentQuizQuestion();
+    if (q) {
+      state.wrongAnswers.push({
+        text: q.text,
+        correctOption: q.options[q.correct],
+        explanation: q.explanation
+      });
+    }
+  }
+  qs.phase = 'done';
+  qs.doneTimer = 4.0;
+  const tiers = SCORE_TIERS_BY_WAVE[qs.configIndex] || SCORE_TIERS_BY_WAVE[0];
+  qs.tier = tiers.find(t => qs.score >= t.minScore) || tiers[tiers.length - 1];
+}
+
+function updateQuiz(dt) {
+  const qs = state.quizState;
+  if (!qs) return;
+
+  if (qs.phase === 'asking') {
+    qs.countdownTimer -= dt;
+    if (qs.countdownTimer <= 0) {
+      qs.countdownTimer = 0;
+      finishQuiz();
+    }
+  } else if (qs.phase === 'result') {
+    qs.countdownTimer -= dt;
+    qs.resultTimer -= dt;
+    if (qs.countdownTimer <= 0) { qs.countdownTimer = 0; finishQuiz(); return; }
+    if (qs.resultTimer <= 0) advanceQuizQuestion();
+  } else if (qs.phase === 'done') {
+    qs.doneTimer -= dt;
+    if (qs.doneTimer <= 0) {
+      const tier = qs.tier || SCORE_TIERS[SCORE_TIERS.length - 1];
+      tier.rewards.forEach(id => applyCharm(id));
+      state.quizState = null;
+      state.waveState = 'break';
+      state.waveTimer = CONFIG.breakDuration;
+      state.breakPlantHint = true;
+    }
+  }
+}
+
+// ─── Quiz Rendering ───────────────────────────────────────────────────────────
+function drawQuizModal() {
+  const qs = state.quizState;
+  if (!qs) return;
+
+  // ── Done screen ──────────────────────────────────────────────────────────────
+  if (qs.phase === 'done') {
+    const tier = qs.tier || SCORE_TIERS_BY_WAVE[0][SCORE_TIERS_BY_WAVE[0].length - 1];
+    const descLines = tier.desc.split('\n');
+    const W = 600, H = 160 + descLines.length * 26;
+    const mx = (CONFIG.width - W) / 2;
+    const my = (CONFIG.height - H) / 2;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+    ctx.beginPath();
+    ctx.roundRect(mx, my, W, H, 14);
+    ctx.fillStyle = 'rgba(5,12,8,0.97)';
+    ctx.fill();
+    ctx.strokeStyle = tier.color;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.textAlign = 'center';
+
+    // Result label + score
+    ctx.fillStyle = tier.color;
+    ctx.font = `bold 36px Georgia, "Times New Roman", serif`;
+    ctx.fillText(`${tier.label}`, mx + W / 2, my + 56);
+    ctx.font = `bold 20px Georgia, "Times New Roman", serif`;
+    ctx.fillStyle = '#ffe066';
+    ctx.fillText(`${qs.score} point${qs.score !== 1 ? 's' : ''}`, mx + W / 2, my + 84);
+
+    // Reward description lines
+    ctx.fillStyle = '#e8ffee';
+    ctx.font = `bold 17px Georgia, "Times New Roman", serif`;
+    descLines.forEach((line, li) => {
+      ctx.fillText(line, mx + W / 2, my + 120 + li * 30);
+    });
+
+    // Answered count
+    ctx.fillStyle = '#6a8e70';
+    ctx.font = `14px Georgia, "Times New Roman", serif`;
+    ctx.fillText(`${qs.answered} question${qs.answered !== 1 ? 's' : ''} answered  ·  Score: ${qs.score} pts`, mx + W / 2, my + H - 16);
+
+    ctx.restore();
+    return;
+  }
+
+  // ── Active quiz (asking / result) ────────────────────────────────────────────
+  const q = currentQuizQuestion();
+  if (!q) return;
+  const cfg = QUIZ_CONFIG[qs.configIndex];
+  const W = 720, H = 360;
+  const mx = (CONFIG.width - W) / 2;
+  const my = (CONFIG.height - H) / 2 - 10;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.60)';
+  ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+
+  // Panel
+  ctx.beginPath();
+  ctx.roundRect(mx, my, W, H, 16);
+  ctx.fillStyle = 'rgba(4,12,6,0.97)';
+  ctx.fill();
+  ctx.strokeStyle = '#5a9e65';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Header bar
+  ctx.beginPath();
+  ctx.roundRect(mx, my, W, 50, [16, 16, 0, 0]);
+  ctx.fillStyle = 'rgba(22,58,30,0.98)';
+  ctx.fill();
+
+  // Header: title left, score right
+  ctx.fillStyle = '#9effc0';
+  ctx.font = 'bold 16px Georgia, "Times New Roman", serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`🌿 ECO QUIZ  ·  ${cfg.waveLabel}`, mx + 20, my + 32);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ffe066';
+  ctx.font = 'bold 16px Georgia, "Times New Roman", serif';
+  ctx.fillText(`Score: ${qs.score}`, mx + W - 20, my + 32);
+
+  // Countdown bar
+  const barW = W - 36;
+  const timeLeft = Math.max(qs.countdownTimer, 0);
+  const pct = timeLeft / cfg.duration;
+  const barColor = pct > 0.5 ? '#6aee80' : pct > 0.25 ? '#ffe066' : '#ff6b6b';
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(mx + 18, my + 52, barW, 7);
+  ctx.fillStyle = barColor;
+  ctx.fillRect(mx + 18, my + 52, barW * pct, 7);
+  // Timer number inside bar area
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 13px Georgia, "Times New Roman", serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${Math.ceil(timeLeft)}s`, mx + W - 20, my + 50);
+
+  // Question text — larger, prominent
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e2ffec';
+  ctx.font = 'bold 19px Georgia, "Times New Roman", serif';
+  wrapText(ctx, q.text, mx + W / 2, my + 100, W - 56, 26);
+
+  // Option buttons
+  const btnW = W - 72, btnH = 44, btnX = mx + 36;
+  const optionsY = my + 140;
+  const gap = 52;
+
+  q.options.forEach((opt, i) => {
+    const by = optionsY + i * gap;
+    let bg = 'rgba(30,54,36,0.92)';
+    let border = '#3d6644';
+    let textCol = '#c8f0d4';
+    let labelCol = '#5a9e65';
+
+    if (qs.phase === 'result') {
+      if (i === q.correct) {
+        bg = 'rgba(20,90,38,0.96)'; border = '#7ef09a'; textCol = '#edfff3'; labelCol = '#7ef09a';
+      } else if (i === qs.selected && i !== q.correct) {
+        bg = 'rgba(100,22,22,0.94)'; border = '#e06868'; textCol = '#fde8e8'; labelCol = '#e06868';
+      }
+    }
+
+    ctx.beginPath();
+    ctx.roundRect(btnX, by, btnW, btnH, 10);
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    // Option letter badge
+    const label = String.fromCharCode(65 + i);
+    ctx.fillStyle = labelCol;
+    ctx.font = `bold 16px Georgia, "Times New Roman", serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText(label, btnX + 16, by + 28);
+
+    // Divider line
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(btnX + 36, by + 10);
+    ctx.lineTo(btnX + 36, by + btnH - 10);
+    ctx.stroke();
+
+    // Option text
+    ctx.fillStyle = textCol;
+    ctx.font = `16px Georgia, "Times New Roman", serif`;
+    ctx.fillText(opt, btnX + 48, by + 28);
+
+    // Tick / cross
+    if (qs.phase === 'result') {
+      ctx.textAlign = 'right';
+      ctx.font = 'bold 18px Georgia, "Times New Roman", serif';
+      if (i === q.correct) { ctx.fillStyle = '#7ef09a'; ctx.fillText('✓', btnX + btnW - 14, by + 29); }
+      else if (i === qs.selected && i !== q.correct) { ctx.fillStyle = '#e06868'; ctx.fillText('✗', btnX + btnW - 14, by + 29); }
+    }
+
+    qs._optRects[i] = { x: btnX, y: by, w: btnW, h: btnH };
+  });
+
+  // Result feedback + explanation
+  if (qs.phase === 'result') {
+    const correct = qs.selected === q.correct;
+    const pts = cfg.pointsPerQ;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = correct ? '#7ef09a' : '#e06868';
+    ctx.font = `bold 16px Georgia, "Times New Roman", serif`;
+    ctx.fillText(correct ? `✓  Correct!  +${pts} pt${pts > 1 ? 's' : ''}` : '✗  Incorrect', mx + W / 2, my + H - 40);
+    ctx.fillStyle = '#7aaa84';
+    ctx.font = `13px Georgia, "Times New Roman", serif`;
+    wrapText(ctx, q.explanation, mx + W / 2, my + H - 18, W - 64, 16);
+  }
+
+  // Footer hint
+  if (qs.phase === 'asking') {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#3d6040';
+    ctx.font = `13px Georgia, "Times New Roman", serif`;
+    ctx.fillText(`Each correct answer = ${cfg.pointsPerQ} pt${cfg.pointsPerQ > 1 ? 's' : ''}  ·  Higher score = better upgrades`, mx + W / 2, my + H - 12);
+  }
+
+  ctx.restore();
+}
+
+// Helper: wrap long text
+function wrapText(ctx, text, cx, y, maxW, lineH) {
+  const words = text.split(' ');
+  let line = '';
+  let lines = [];
+  for (const word of words) {
+    const test = line + (line ? ' ' : '') + word;
+    if (ctx.measureText(test).width > maxW && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  const startY = y - ((lines.length - 1) * lineH) / 2;
+  lines.forEach((l, i) => ctx.fillText(l, cx, startY + i * lineH));
+}
+
+// Left-aligned word-wrap helper — starts at (lx, y) and flows downward
+function wrapTextLeft(ctx, text, lx, y, maxW, lineH) {
+  const words = text.split(' ');
+  let line = '';
+  let lines = [];
+  for (const word of words) {
+    const test = line + (line ? ' ' : '') + word;
+    if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  lines.forEach((l, i) => ctx.fillText(l, lx, y + i * lineH));
+}
+
+// ─── Active Charm HUD icons ────────────────────────────────────────────────────
+const CHARM_MAX_TTL = { artifact_freeze_field: 5, charm_core_shield: 20, charm_purify_shield: 30 };
+
+function drawCharmHud() {
+  const held = state.heldArtifacts || [];
+  const active = state.activeCharms;
+  if (held.length === 0 && active.length === 0) return;
+  ctx.save();
+  const iconW = 36, iconH = 36, padX = 8, padY = 6;
+  let row = 0;
+
+  // Held artifacts (ready to use) — shown with [E] prompt, pulsing border
+  held.forEach(id => {
+    const def = CHARM_DEFS[id];
+    if (!def) return;
+    const x = CONFIG.width - iconW - padX;
+    const y = 56 + row * (iconH + 10);
+    const pulse = 0.7 + 0.3 * Math.sin(performance.now() * 0.005);
+    ctx.beginPath();
+    ctx.roundRect(x, y, iconW, iconH, 7);
+    ctx.fillStyle = 'rgba(10,20,12,0.90)';
+    ctx.fill();
+    ctx.strokeStyle = `rgba(160,228,255,${pulse})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.font = '18px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(def.icon, x + iconW / 2, y + 24);
+    // [E] key label
+    ctx.font = 'bold 9px "Trebuchet MS", Arial, sans-serif';
+    ctx.fillStyle = '#a0e4ff';
+    ctx.fillText('[E]', x + iconW / 2, y + iconH + 10);
+    row++;
+  });
+
+  // Active charms — shown with TTL drain bar
+  active.forEach(c => {
+    const def = CHARM_DEFS[c.id];
+    if (!def) return;
+    const x = CONFIG.width - iconW - padX;
+    const y = 56 + row * (iconH + 10);
+    ctx.beginPath();
+    ctx.roundRect(x, y, iconW, iconH, 7);
+    ctx.fillStyle = 'rgba(10,20,12,0.85)';
+    ctx.fill();
+    ctx.strokeStyle = def.color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.font = '18px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(def.icon, x + iconW / 2, y + 24);
+    // TTL bar
+    const maxTtl = CHARM_MAX_TTL[c.id] || 30;
+    const pct = Math.min(c.ttl / maxTtl, 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(x, y + iconH + 2, iconW, 4);
+    ctx.fillStyle = def.color;
+    ctx.fillRect(x, y + iconH + 2, iconW * pct, 4);
+    row++;
+  });
+  ctx.restore();
+}
 
 const keys = {};
 let lastTime = 0;
@@ -241,9 +911,11 @@ const sound = {
     for (const [key, src] of Object.entries(audioFiles)) {
       const a = new Audio(src);
       a.preload = 'auto';
-      if (key === 'bgm') {
+      if (key === 'bgm' || key === 'victoryBgm') {
         a.loop = true;
-        a.volume = 0.22;
+        a.volume = 0.30;
+      } else if (key === 'spawn') {
+        a.volume = 0.18;  // 出场音效调低，避免刺耳
       } else {
         a.volume = 0.6;
       }
@@ -259,6 +931,16 @@ const sound = {
     if (state.muted) return;
     const bgm = this.pool.bgm;
     if (bgm.paused) bgm.play().catch(() => {});
+  },
+  playVictoryMusic() {
+    if (state.muted) return;
+    this.stopMusic();
+    const v = this.pool.victoryBgm;
+    if (v) { v.currentTime = 0; v.play().catch(() => {}); }
+  },
+  stopVictoryMusic() {
+    const v = this.pool.victoryBgm;
+    if (v) { v.pause(); v.currentTime = 0; }
   },
   stopMusic() {
     this.pool.bgm.pause();
@@ -367,6 +1049,8 @@ function createTree(x, y, zone = 'sanctuary') {
   if (!cell) return null;
   const occupied = state.trees.some(t => !t.dead && t.col === cell.col && t.row === cell.row);
   if (occupied) return null;
+  const tooClose = state.trees.some(t => !t.dead && dist(cell.x, cell.y, t.x, t.y) < CONFIG.grid.cell * 0.9);
+  if (tooClose) return null;
   const spec = treeTierSpec(state.treeTier);
   const baseHp = zone === 'enemy' ? spec.hpEnemy : spec.hpSanctuary;
   const tree = {
@@ -380,6 +1064,7 @@ function createTree(x, y, zone = 'sanctuary') {
     absorb: spec.absorb,
     heal: spec.heal,
     sway: rand(0, Math.PI * 2),
+    growScale: 0.08,
     dead: false
   };
   state.trees.push(tree);
@@ -410,14 +1095,109 @@ function hasAffordableShopItem() {
   return false;
 }
 
-function seedInitialTrees() {
-  state.trees = [];
-  [
-    [2, 1], [3, 2], [2, 4], [4, 3], [5, 1], [5, 5]
-  ].forEach(([col, row]) => {
-    const c = gridCellCenter(col, row);
-    createTree(c.x, c.y, 'sanctuary');
+function randomEmptyGridCell(zone) {
+  const candidates = [];
+  for (let row = 0; row < CONFIG.grid.rows; row++) {
+    for (let col = 0; col < CONFIG.grid.cols; col++) {
+      const c = gridCellCenter(col, row);
+      if (zone === 'sanctuary' && c.x > CONFIG.sanctuaryEdge) continue;
+      if (zone === 'enemy' && c.x <= CONFIG.sanctuaryEdge) continue;
+      const occupied = state.trees.some(t => !t.dead && t.col === col && t.row === row);
+      const reserved = state.sprites.some(s => s.targetCol === col && s.targetRow === row);
+      if (occupied || reserved) continue;
+
+      // Canvas y轴朝下：0度=正右，90度=正下，180度=正左
+      // 高地（西北）角度约200-350度，低平空地在0-200度范围
+      // 只允许飞向 0-200 度，排除西北高地背后区域
+      const angleRad = Math.atan2(c.y - CONFIG.core.y, c.x - CONFIG.core.x);
+      const angleDeg = ((angleRad * 180 / Math.PI) + 360) % 360;
+      if (angleDeg > 200) continue;
+
+      // y 越大（越靠近地图中低平地）权重越高
+      const gridYMin = CONFIG.grid.startY;
+      const gridYMax = CONFIG.grid.startY + (CONFIG.grid.rows - 1) * CONFIG.grid.cell;
+      const lowlandWeight = 0.3 + 1.4 * ((c.y - gridYMin) / (gridYMax - gridYMin));
+
+      // 周围相邻格有树则强力降权
+      let neighborTrees = 0;
+      for (const t of state.trees) {
+        if (t.dead) continue;
+        if (Math.abs(t.col - col) <= 1 && Math.abs(t.row - row) <= 1) neighborTrees++;
+      }
+      const crowdPenalty = 1 / (1 + neighborTrees * 2.5);
+
+      candidates.push({ col, row, x: c.x, y: c.y, weight: lowlandWeight * crowdPenalty });
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  // 加权随机抽取
+  const totalWeight = candidates.reduce((s, c) => s + c.weight, 0);
+  let r = Math.random() * totalWeight;
+  for (const c of candidates) {
+    r -= c.weight;
+    if (r <= 0) return c;
+  }
+  return candidates[candidates.length - 1];
+}
+
+function spawnCoreSprite() {
+  if (state.sprites.length >= 8) return;
+  const target = randomEmptyGridCell('sanctuary');
+  if (!target) return;
+  state.sprites.push({
+    x: CONFIG.core.x,
+    y: CONFIG.core.y,
+    targetX: target.x,
+    targetY: target.y,
+    targetCol: target.col,
+    targetRow: target.row,
+    trail: [],
+    done: false
   });
+  emitBurst(CONFIG.core.x, CONFIG.core.y, '#a8ffcc', 6, 50, 3);
+}
+
+function updateSprites(dt) {
+  const coreHpPct = Math.max(0.01, state.core.hp / CONFIG.core.maxHp);
+  const spawnInterval = 8.0 / coreHpPct;
+  state.coreSpriteTimer -= dt;
+  if (state.coreSpriteTimer <= 0) {
+    state.coreSpriteTimer = spawnInterval;
+    spawnCoreSprite();
+  }
+
+  for (const sp of state.sprites) {
+    if (sp.done) continue;
+    sp.trail.push({ x: sp.x, y: sp.y, ttl: 0.35 });
+    const dx = sp.targetX - sp.x;
+    const dy = sp.targetY - sp.y;
+    const d = Math.hypot(dx, dy);
+    const speed = 80;
+    if (d < speed * dt + 2) {
+      sp.x = sp.targetX;
+      sp.y = sp.targetY;
+      sp.done = true;
+      createTree(sp.x, sp.y, 'sanctuary');
+      emitLeaf(sp.x, sp.y - 12);
+      sound.play('plant');
+    } else {
+      sp.x += (dx / d) * speed * dt;
+      sp.y += (dy / d) * speed * dt;
+    }
+    for (const t of sp.trail) t.ttl -= dt;
+    sp.trail = sp.trail.filter(t => t.ttl > 0);
+  }
+  state.sprites = state.sprites.filter(sp => !sp.done);
+}
+
+const MAX_POLLUTION_PATCHES = 60;
+
+function addPollution(x, y, toxin, radius, ttl = 18) {
+  if (state.pollutions.length >= MAX_POLLUTION_PATCHES) {
+    state.pollutions.shift(); // 超限时丢弃最老的
+  }
+  state.pollutions.push({ x, y, toxin, radius, ttl });
 }
 
 function spawnPollutionPatches() {
@@ -427,7 +1207,8 @@ function spawnPollutionPatches() {
       x: rand(CONFIG.slopeStart - 40, CONFIG.width - 30),
       y: rand(110, 625),
       toxin: rand(0.25, 0.9),
-      radius: rand(24, 48)
+      radius: rand(24, 48),
+      ttl: 999 // 初始静态背景 patch 不消失
     });
   }
 }
@@ -452,6 +1233,9 @@ function resetGame() {
   };
   state.core.hp = CONFIG.core.maxHp;
   state.enemies = [];
+  state.smokeParticles = [];
+  state.twisters = [];
+  state.ultPulses = [];
   state.projectiles = [];
   state.particles = [];
   state.messages = [];
@@ -474,7 +1258,15 @@ function resetGame() {
   state.stats.toxin = 0;
   state.shopOpen = false;
   state.loadoutOpen = false;
-  seedInitialTrees();
+  state.sprites = [];
+  state.coreSpriteTimer = 3.0;
+  state.trees = [];
+  state.quizState = null;
+  state.activeCharms = [];
+  state.heldArtifacts = [];
+  state.wrongAnswers = [];
+  state.quizPendingTimer = 0;
+  state.quizPendingIndex = -1;
   spawnPollutionPatches();
 }
 
@@ -486,7 +1278,9 @@ function openNextWave() {
   }
   state.waveState = 'fighting';
   state.breakPlantHint = false;
-  state.waveIntro = 1.6;
+  const isBossWave = state.waveIndex >= 1;
+  state.waveIntro = isBossWave ? 3.2 : 2.0;
+  state.waveIntroMax = state.waveIntro;
   const wave = CONFIG.waves[state.waveIndex];
   state.waveQueue = [];
   for (const [type, count] of Object.entries(wave)) {
@@ -494,14 +1288,17 @@ function openNextWave() {
   }
   state.waveQueue.sort(() => Math.random() - 0.5);
   state.waveSpawnGap = 0.8;
-  state.waveSpawnTimer = 1.25;
-  if (state.waveIndex >= 1) punch(0.22, 0.018);
-  addMessage(`Wave ${state.waveIndex + 1} begins`, '#fff1a1', 1.8);
+  state.waveSpawnTimer = isBossWave ? 3.8 : 1.25;
+  if (isBossWave) {
+    punch(0.38, 0.06);
+    for (let i = 0; i < 3; i++) setTimeout(() => punch(0.22, 0.03), i * 280);
+  } else {
+    punch(0.22, 0.018);
+  }
   sound.play('spawn');
   if (state.waveIndex === 2) {
     if (!state.ownedWeapons.includes('firesword')) state.ownedWeapons.push('firesword');
     state.currentWeapon = 'firesword';
-    addMessage('Flame Greatsword equipped for Wave 3', '#ff9d4f', 2.2);
   }
 }
 
@@ -554,6 +1351,8 @@ function damageHero(amount) {
 }
 
 function damageCore(amount) {
+  if (hasCharm('charm_purify_shield')) amount *= 0.7;
+  if (hasCharm('charm_core_shield')) amount *= 0.5;
   state.core.hp = Math.max(0, state.core.hp - amount);
   punch(0.14, 0.04);
   emitBurst(CONFIG.core.x, CONFIG.core.y - 8, '#9fffd8', 10, 95, 5);
@@ -620,30 +1419,126 @@ function heroUltimate() {
     addMessage('Ultimate needs at least 60% HP', '#ffb4a2');
     return;
   }
+  if (hero.dashing) return;
   hero.ultCd = CONFIG.hero.ultCd;
-  hero.ultTime = 0.32;
-  punch(0.08, 0.018);
-  emitBurst(hero.x, hero.y - 62, '#ffd56f', 18, 96, 4.2);
-  emitRing(hero.x, hero.y - 62, '#ffe38d', 74, 0.16);
-  emitRing(hero.x, hero.y - 62, '#fff3c7', 104, 0.24);
-  let cleared = 0;
-  for (const enemy of state.enemies) {
-    if (enemy.dead) continue;
-    const hitX = hero.x;
-    const hitY = hero.y - 62;
-    const hitRadius = enemy.type === 'boss' ? 102 : 110;
-    if (dist(hitX, hitY, enemy.x, enemy.y - enemy.radius * 0.45) <= hitRadius + enemy.radius) {
-      const lethal = enemy.hp <= (enemy.type === 'boss' ? 170 : enemy.type === 'miniboss' ? 230 : 999);
-      damageEnemy(enemy, enemy.type === 'boss' ? 170 : enemy.type === 'miniboss' ? 230 : 999, null, false);
-      if (lethal) {
-        emitBurst(enemy.x, enemy.y - enemy.radius * 0.4, '#fff2a6', 10, 96, 3.8);
-        emitRing(enemy.x, enemy.y - enemy.radius * 0.25, '#ffe38d', 38, 0.22);
-      }
-      cleared += 1;
-    }
-  }
-  if (cleared > 0) sound.play('enemyDown');
+  hero.ultTime = 0.55;
+
+  // 冲刺参数：沿facing方向冲刺280px，耗时0.18s
+  const dashDist = 280;
+  const dashDuration = 0.18;
+  hero.dashing = true;
+  hero.dashStartX = hero.x;
+  hero.dashStartY = hero.y;
+  hero.dashTargetX = clamp(hero.x + hero.facing * dashDist, 80, CONFIG.width - 65);
+  hero.dashTargetY = hero.y;
+  hero.dashTimer = dashDuration;
+  hero.dashDuration = dashDuration;
+  hero.dashTrail = [];
+  hero.dashHit = new Set();
+
+  // 起手特效
+  emitBurst(hero.x, hero.y - 50, '#a8ffc8', 10, 80, 3);
+  emitRing(hero.x, hero.y - 50, '#ccffe8', 22, 0.12);
+  state.shake = Math.max(state.shake, 0.08);
   sound.play('ultimate');
+}
+
+function updateUltPulses(dt) {
+  const hero = state.hero;
+  if (!hero || !hero.dashing) {
+    // 推进净化动画计时
+    for (const enemy of state.enemies) {
+      if (!enemy.purifying) continue;
+      enemy.purifyTimer -= dt;
+      if (enemy.purifyTimer <= 0) enemy.purifying = false;
+    }
+    return;
+  }
+
+  hero.dashTimer -= dt;
+  const progress = clamp(1 - hero.dashTimer / hero.dashDuration, 0, 1);
+  // easeOut：前半段快，后半段缓停
+  const ease = 1 - Math.pow(1 - progress, 2.5);
+
+  hero.x = lerp(hero.dashStartX, hero.dashTargetX, ease);
+  hero.y = lerp(hero.dashStartY, hero.dashTargetY, ease);
+
+  // 残影轨迹
+  hero.dashTrail.push({ x: hero.x, y: hero.y, ttl: 0.22, maxTtl: 0.22 });
+  for (const t of hero.dashTrail) t.ttl -= dt;
+  hero.dashTrail = hero.dashTrail.filter(t => t.ttl > 0);
+
+  // 冲刺路径上的碰撞检测，杀伤宽度约50px（仅正前方窄条）
+  const hitWidth = 50;
+  for (const enemy of state.enemies) {
+    if (enemy.dead || hero.dashHit.has(enemy)) continue;
+    const ex = enemy.x, ey = enemy.y - enemy.radius * 0.4;
+    // 敌人到冲刺路径线段的垂直距离
+    const alongX = hero.dashTargetX - hero.dashStartX;
+    const toEx = ex - hero.dashStartX;
+    const toEy = ey - hero.dashStartY;
+    const projLen = Math.hypot(alongX, 0);
+    const proj = projLen > 0 ? (toEx * alongX) / (projLen * projLen) : 0;
+    const closestX = hero.dashStartX + clamp(proj, 0, 1) * alongX;
+    const closestY = hero.dashStartY;
+    const perpDist = dist(ex, ey, closestX, closestY);
+
+    if (perpDist > hitWidth + enemy.radius) continue;
+    // 只打已经被英雄"经过"的位置
+    const passedX = hero.facing > 0 ? ex <= hero.x + 10 : ex >= hero.x - 10;
+    if (!passedX) continue;
+
+    hero.dashHit.add(enemy);
+    const dmg = enemy.type === 'boss' ? 170 : enemy.type === 'miniboss' ? 230 : 9999;
+    const lethal = enemy.hp <= dmg;
+
+    enemy.purifying = true;
+    enemy.purifyTimer = lethal ? 0.65 : 0.25;
+    enemy.purifyLethal = lethal;
+
+    // 净化粒子
+    for (let i = 0; i < (lethal ? 16 : 7); i++) {
+      const a = rand(-Math.PI, Math.PI);
+      const s = rand(40, lethal ? 120 : 70);
+      state.particles.push({
+        x: ex + rand(-enemy.radius * 0.5, enemy.radius * 0.5),
+        y: ey - rand(0, enemy.radius * 0.5),
+        vx: Math.cos(a) * s * 0.5,
+        vy: Math.sin(a) * s - rand(20, 60),
+        ttl: rand(0.4, lethal ? 1.0 : 0.6),
+        size: rand(2, lethal ? 4.5 : 3),
+        color: lethal ? '#a8ffc8' : '#6effa8'
+      });
+    }
+    if (lethal) {
+      emitRing(ex, ey, '#a8ffc8', enemy.radius * 1.8, 0.4);
+      punch(0.05, 0.008);
+    }
+
+    // 延迟实际扣血，让溶解动画先播
+    const delay = lethal ? 600 : 220;
+    setTimeout(() => { if (!enemy.dead) damageEnemy(enemy, dmg, null, false); }, delay);
+    if (lethal) setTimeout(() => sound.play('enemyDown'), delay + 50);
+  }
+
+  // 冲刺结束
+  if (hero.dashTimer <= 0) {
+    hero.dashing = false;
+    hero.dashTrail = [];
+    hero.x = hero.dashTargetX;
+    hero.y = hero.dashTargetY;
+    // 落点特效
+    emitBurst(hero.x, hero.y - 50, '#a8ffc8', 12, 90, 3.5);
+    emitSlash(hero.x + hero.facing * 30, hero.y - 60, hero.facing, '#a8ffc8', 80);
+    state.shake = Math.max(state.shake, 0.1);
+  }
+
+  // 净化计时推进
+  for (const enemy of state.enemies) {
+    if (!enemy.purifying) continue;
+    enemy.purifyTimer -= dt;
+    if (enemy.purifyTimer <= 0) enemy.purifying = false;
+  }
 }
 
 function heroPlant() {
@@ -731,6 +1626,7 @@ function updateTrees(dt) {
   for (const tree of state.trees) {
     if (tree.dead) continue;
     tree.sway += dt * 2;
+    if (tree.growScale < 1) tree.growScale = Math.min(1, tree.growScale + dt * 0.18);
     const polluted = tree.zone === 'enemy';
     if (polluted) {
       for (const patch of state.pollutions) {
@@ -749,8 +1645,14 @@ function updateTrees(dt) {
 }
 
 function updateEnemies(dt) {
+  const freezeActive = hasCharm('artifact_freeze_field');
   for (const enemy of state.enemies) {
     if (enemy.dead) continue;
+    if (freezeActive) {
+      enemy.frozen = true;
+      continue; // skip all movement and attacks while frozen
+    }
+    enemy.frozen = false;
     enemy.hitFlash = Math.max(0, (enemy.hitFlash || 0) - dt);
     enemy.hitSquash = Math.max(0, (enemy.hitSquash || 0) - dt * 1.8);
     enemy.gait += dt * (enemy.type === 'boss' ? 4 : enemy.type === 'miniboss' ? 5 : 7);
@@ -780,7 +1682,8 @@ function updateEnemies(dt) {
       if (target.isCore) {
         damageCore(enemy.damage);
       } else if (!target.dead) {
-        target.hp = Math.max(0, target.hp - enemy.damage);
+        const dmg = hasCharm('charm_purify_shield') ? enemy.damage * 0.7 : enemy.damage;
+        target.hp = Math.max(0, target.hp - dmg);
         emitBurst(target.x, target.y - 35, '#c4d589', 10, 70, 4);
         if (target.hp <= 0) target.dead = true;
       }
@@ -790,12 +1693,194 @@ function updateEnemies(dt) {
       enemy.poisonTimer += dt;
       if (enemy.poisonTimer > 1.8) {
         enemy.poisonTimer = 0;
-        state.pollutions.push({
-          x: enemy.x - 12,
-          y: enemy.y,
-          toxin: 0.18,
-          radius: rand(24, 38)
-        });
+        // 找最近目标（树木优先，其次英雄）
+        let skullTarget = null;
+        let skullDist = Infinity;
+        for (const tree of state.trees) {
+          if (tree.dead) continue;
+          const d = dist(enemy.x, enemy.y, tree.x, tree.y);
+          if (d < skullDist) { skullDist = d; skullTarget = { x: tree.x, y: tree.y - 20, isTree: true, tree }; }
+        }
+        if (!state.hero.isDown) {
+          const hd = dist(enemy.x, enemy.y, state.hero.x, state.hero.y - 40);
+          if (!skullTarget || hd < skullDist * 0.7) {
+            skullTarget = { x: state.hero.x, y: state.hero.y - 40, isHero: true };
+          }
+        }
+        if (skullTarget) {
+          const dx = skullTarget.x - enemy.x;
+          const dy = skullTarget.y - enemy.y;
+          const d = Math.hypot(dx, dy) || 1;
+          const spd = 140;
+          state.projectiles.push({
+            x: enemy.x, y: enemy.y - 10,
+            vx: (dx / d) * spd, vy: (dy / d) * spd,
+            radius: 7, dmg: enemy.damage,
+            ttl: 2.2,
+            color: '#7cff6e',
+            isPoison: true,
+            effect: null
+          });
+          // 发射时吐出烟雾特效
+          for (let i = 0; i < 4; i++) {
+            state.smokeParticles.push({
+              x: enemy.x + rand(-8, 8), y: enemy.y - 14,
+              vx: rand(-10, 10), vy: rand(-20, -8),
+              size: rand(5, 10), alpha: 0.4, ttl: 0.6,
+              grow: 0.5, color: '90,160,50'
+            });
+          }
+        }
+      }
+    }
+
+    // miniboss 大招：释放紫色旋风粒子群
+    if (enemy.type === 'miniboss') {
+      enemy.abilityCd = (enemy.abilityCd || 0) - dt;
+      if (enemy.abilityCd <= 0) {
+        enemy.abilityCd = 3.5;
+        punch(0.08, 0.015);
+        emitBurst(enemy.x, enemy.y - enemy.radius * 0.5, '#cc66ff', 10, 80, 3.5);
+        emitRing(enemy.x, enemy.y - enemy.radius * 0.5, '#dd88ff', 50, 0.22);
+        // 释放 5-7 颗旋风，向随机方向漂移扩散
+        const count = Math.floor(rand(10, 15));
+        for (let i = 0; i < count; i++) {
+          const angle = rand(0, Math.PI * 2);
+          const spd = rand(90, 200);
+          state.twisters.push({
+            x: enemy.x + rand(-18, 18),
+            y: enemy.y - enemy.radius * 0.4,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd - 30,
+            spin: rand(0, Math.PI * 2),
+            spinSpeed: rand(4, 9) * (Math.random() < 0.5 ? 1 : -1),
+            radius: rand(14, 22),
+            ttl: rand(2.2, 3.6),
+            dmgTimer: 0,
+            alpha: 0.85
+          });
+        }
+        addMessage('Miniboss: Vortex Release!', '#cc66ff', 1.2);
+        sound.play('skill');
+      }
+    }
+
+    // boss 大招：两种交替
+    if (enemy.type === 'boss') {
+      enemy.abilityCd = (enemy.abilityCd || 0) - dt;
+      enemy.abilityPhase = enemy.abilityPhase || 0;
+      if (enemy.abilityCd <= 0) {
+        enemy.abilityPhase = (enemy.abilityPhase + 1) % 2;
+
+        if (enemy.abilityPhase === 0) {
+          // 大招A：全场废气弹幕，向8个方向射出毒气弹
+          enemy.abilityCd = 7.0;
+          emitBurst(enemy.x, enemy.y - enemy.radius, '#9933cc', 20, 110, 5);
+          emitRing(enemy.x, enemy.y - enemy.radius, '#7700aa', 70, 0.3);
+          punch(0.16, 0.04);
+          const count = 8;
+          for (let i = 0; i < count; i++) {
+            const angle = (i / count) * Math.PI * 2;
+            state.projectiles.push({
+              x: enemy.x, y: enemy.y - enemy.radius * 0.6,
+              vx: Math.cos(angle) * 160, vy: Math.sin(angle) * 160,
+              radius: 9, dmg: 22,
+              ttl: 2.8,
+              color: '#aa44dd',
+              isPoison: true,
+              effect: null
+            });
+          }
+          addMessage('BOSS: Pollution Barrage!', '#cc66ff', 1.5);
+          sound.play('spawn');
+        } else {
+          // 大招B：地面污染爆破
+          enemy.abilityCd = 9.0;
+          const liveTrees = state.trees.filter(t => !t.dead);
+          const targets = liveTrees.sort(() => Math.random() - 0.5).slice(0, 3);
+          const points = targets.length > 0
+            ? targets.map((t, i) => ({ x: t.x + rand(-24, 24), y: t.y + rand(-12, 12), delay: i * 650 }))
+            : [{ x: CONFIG.core.x + rand(-60, 60), y: CONFIG.core.y + rand(-30, 60), delay: 0 }];
+
+          for (const pt of points) {
+            setTimeout(() => {
+              const bx = pt.x, by = pt.y;
+              const blastR = 70;
+
+              // 多层爆炸环：由内到外
+              emitRing(bx, by, '#ffffff', 20, 0.10);
+              emitRing(bx, by, '#ff6600', 45, 0.20);
+              emitRing(bx, by, '#dd3300', 70, 0.30);
+              emitRing(bx, by, '#882200', 100, 0.40);
+
+              // 中心白闪
+              emitBurst(bx, by, '#ffffff', 10, 60, 5);
+              // 橙红碎片向外喷射
+              emitBurst(bx, by, '#ff6600', 22, 130, 4.5);
+              emitBurst(bx, by, '#dd4400', 16, 90, 3.5);
+              // 黑色烟雾碎片
+              for (let i = 0; i < 8; i++) {
+                const a = rand(0, Math.PI * 2);
+                const s = rand(50, 110);
+                state.smokeParticles.push({
+                  x: bx, y: by,
+                  vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40,
+                  size: rand(12, 24), alpha: rand(0.5, 0.75),
+                  ttl: rand(1.0, 2.0), grow: rand(0.8, 1.6),
+                  color: '40,28,18'
+                });
+              }
+              // 落地污染残留（有生命周期，不永久堆积）
+              for (let i = 0; i < 3; i++) {
+                addPollution(
+                  bx + rand(-blastR * 0.6, blastR * 0.6),
+                  by + rand(-blastR * 0.4, blastR * 0.4),
+                  rand(0.5, 0.85), rand(35, 60), rand(12, 20)
+                );
+              }
+
+              punch(0.18, 0.04);
+              sound.play('coreHit');
+
+              // 伤害判定
+              for (const t2 of state.trees) {
+                if (t2.dead) continue;
+                if (dist(bx, by, t2.x, t2.y) < blastR) {
+                  t2.hp = Math.max(0, t2.hp - 40);
+                  if (t2.hp <= 0) t2.dead = true;
+                  emitBurst(t2.x, t2.y - 20, '#ff8844', 6, 70, 3);
+                }
+              }
+              if (!state.hero.isDown && dist(bx, by, state.hero.x, state.hero.y) < blastR) {
+                damageHero(32);
+              }
+            }, pt.delay);
+          }
+          addMessage('BOSS: Ground Eruption!', '#ff6622', 1.5);
+          sound.play('spawn');
+        }
+      }
+    }
+
+    // miniboss / boss 持续排废气
+    if (enemy.type === 'miniboss' || enemy.type === 'boss') {
+      enemy.exhaustTimer = (enemy.exhaustTimer || 0) - dt;
+      if (enemy.exhaustTimer <= 0) {
+        enemy.exhaustTimer = enemy.type === 'boss' ? 0.12 : 0.2;
+        const count = enemy.type === 'boss' ? 3 : 2;
+        for (let i = 0; i < count; i++) {
+          state.smokeParticles.push({
+            x: enemy.x + rand(-enemy.radius * 0.5, enemy.radius * 0.5),
+            y: enemy.y - enemy.radius * rand(0.6, 1.0),
+            vx: rand(-12, 12),
+            vy: rand(-28, -14),
+            size: rand(enemy.type === 'boss' ? 10 : 7, enemy.type === 'boss' ? 20 : 14),
+            alpha: rand(0.28, 0.45),
+            ttl: rand(0.8, 1.6),
+            grow: rand(0.6, 1.2),
+            color: enemy.type === 'boss' ? '100,60,20' : '80,72,30'
+          });
+        }
       }
     }
 
@@ -816,13 +1901,37 @@ function updateProjectiles(dt) {
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     if (p.ttl <= 0) continue;
-    for (const enemy of state.enemies) {
-      if (enemy.dead) continue;
-      if (dist(p.x, p.y, enemy.x, enemy.y - enemy.radius * 0.4) < p.radius + enemy.radius) {
-        damageEnemy(enemy, p.dmg, p.effect);
-        p.ttl = 0;
-        emitBurst(p.x, p.y, p.color, 4, 52, 2.4);
-        break;
+
+    if (p.isPoison) {
+      // skull 毒气弹：打树木和英雄
+      let hit = false;
+      for (const tree of state.trees) {
+        if (tree.dead) continue;
+        if (dist(p.x, p.y, tree.x, tree.y - 20) < p.radius + 22) {
+          tree.hp = Math.max(0, tree.hp - p.dmg);
+          if (tree.hp <= 0) tree.dead = true;
+          emitBurst(p.x, p.y, p.color, 5, 50, 2.5);
+          addPollution(p.x, p.y, 0.18, rand(24, 38), 8);
+          p.ttl = 0; hit = true; break;
+        }
+      }
+      if (!hit && !state.hero.isDown) {
+        if (dist(p.x, p.y, state.hero.x, state.hero.y - 40) < p.radius + 22) {
+          damageHero(p.dmg);
+          emitBurst(p.x, p.y, p.color, 5, 50, 2.5);
+          p.ttl = 0;
+        }
+      }
+    } else {
+      // 玩家武器弹：打敌人
+      for (const enemy of state.enemies) {
+        if (enemy.dead) continue;
+        if (dist(p.x, p.y, enemy.x, enemy.y - enemy.radius * 0.4) < p.radius + enemy.radius) {
+          damageEnemy(enemy, p.dmg, p.effect);
+          p.ttl = 0;
+          emitBurst(p.x, p.y, p.color, 4, 52, 2.4);
+          break;
+        }
       }
     }
   }
@@ -845,6 +1954,14 @@ function updateParticles(dt) {
     p.vy = p.vy * 0.96 + 20 * dt;
   }
   state.particles = state.particles.filter(p => p.ttl > 0);
+  // 有限生命周期的 pollution patch 逐渐消退
+  for (const patch of state.pollutions) {
+    if (patch.ttl < 999) {
+      patch.ttl -= dt;
+      patch.toxin = Math.max(0, patch.toxin - dt * 0.04);
+    }
+  }
+  state.pollutions = state.pollutions.filter(p => p.ttl > 0 && p.toxin > 0.01);
   state.messages = state.messages.filter(m => {
     m.ttl -= dt;
     m.y -= dt * 18;
@@ -857,6 +1974,20 @@ function updateParticles(dt) {
 }
 
 function updateWave(dt) {
+  // Quiz state takes priority
+  if (state.quizState) {
+    updateQuiz(dt);
+    return;
+  }
+  // Pre-quiz delay: show "Wave cleared!" for 2s before popping quiz
+  if (state.waveState === 'quizPending') {
+    state.quizPendingTimer -= dt;
+    if (state.quizPendingTimer <= 0) {
+      state.waveState = 'quiz';
+      startQuiz(state.quizPendingIndex);
+    }
+    return;
+  }
   if (state.waveState === 'break') {
     state.waveTimer -= dt;
     if (state.waveTimer <= 0) openNextWave();
@@ -872,12 +2003,20 @@ function updateWave(dt) {
       if (state.waveIndex === CONFIG.waves.length - 1) {
         state.waveState = 'victoryCheck';
       } else {
-        state.waveState = 'break';
-        state.waveTimer = CONFIG.breakDuration;
-        state.breakPlantHint = true;
-        addMessage(`Wave ${state.waveIndex + 1} cleared`, '#bfffb5', 1.6);
+        addMessage(`Wave ${state.waveIndex + 1} cleared!`, '#bfffb5', 1.8);
         if (state.waveIndex === 0 && !state.ownedWeapons.includes('firesword')) {
-          addMessage('Flame Greatsword is now available in the armory', '#ff9d4f', 1.8);
+          addMessage('Flame Greatsword is now available in the armory', '#ff9d4f', 2.0);
+        }
+        const quizConfigIndex = state.waveIndex; // 0=after Wave1, 1=after Wave2
+        if (quizConfigIndex < QUIZ_CONFIG.length) {
+          addMessage('Eco Quiz incoming — get ready!', '#b8ffca', 1.8);
+          state.waveState = 'quizPending';
+          state.quizPendingTimer = 2.2;
+          state.quizPendingIndex = quizConfigIndex;
+        } else {
+          state.waveState = 'break';
+          state.waveTimer = CONFIG.breakDuration;
+          state.breakPlantHint = true;
         }
       }
     }
@@ -887,15 +2026,118 @@ function updateWave(dt) {
     state.victoryTimer = 0;
     state.cleanReveal = 0;
     sound.play('victory');
+    setTimeout(() => sound.playVictoryMusic(), 1500);
   }
 }
 
+// 工厂烟囱位置（与地图美术对齐）
+const FACTORY_CHIMNEYS = [
+  { x: 1058, y: 148 },
+  { x: 1118, y: 132 },
+  { x: 1158, y: 158 }
+];
+const FACTORY_DRAINS = [
+  { x: 1084, y: 470 },
+  { x: 1128, y: 518 }
+];
+let factorySmokeTimer = 0;
+let factoryDrainTimer = 0;
+
+function updateFactoryFX(dt) {
+  factorySmokeTimer -= dt;
+  if (factorySmokeTimer <= 0) {
+    factorySmokeTimer = 0.18;
+    for (const ch of FACTORY_CHIMNEYS) {
+      state.smokeParticles.push({
+        x: ch.x + rand(-4, 4),
+        y: ch.y,
+        vx: rand(-8, 8),
+        vy: rand(-38, -22),
+        size: rand(10, 20),
+        alpha: rand(0.32, 0.52),
+        ttl: rand(1.4, 2.4),
+        grow: rand(0.8, 1.4),
+        color: Math.random() < 0.5 ? '60,52,48' : '80,70,58'
+      });
+    }
+  }
+  factoryDrainTimer -= dt;
+  if (factoryDrainTimer <= 0) {
+    factoryDrainTimer = 0.25;
+    for (const dr of FACTORY_DRAINS) {
+      for (let i = 0; i < 3; i++) {
+        state.smokeParticles.push({
+          x: dr.x + rand(-6, 6),
+          y: dr.y + rand(0, 8),
+          vx: rand(-18, -6),
+          vy: rand(-6, 4),
+          size: rand(4, 9),
+          alpha: rand(0.35, 0.6),
+          ttl: rand(0.8, 1.6),
+          grow: rand(-0.2, 0.2),
+          color: '72,140,48',
+          isDrain: true
+        });
+      }
+    }
+  }
+  for (const p of state.smokeParticles) {
+    p.ttl -= dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.98;
+    p.vy *= 0.99;
+    p.size += p.grow * dt * 8;
+    p.alpha -= dt * (p.isDrain ? 0.28 : 0.18);
+  }
+  state.smokeParticles = state.smokeParticles.filter(p => p.ttl > 0 && p.alpha > 0);
+}
+
+function updateTwisters(dt) {
+  for (const tw of state.twisters) {
+    tw.ttl -= dt;
+    tw.alpha = clamp(tw.ttl / 0.5, 0, 0.85);
+    tw.x += tw.vx * dt;
+    tw.y += tw.vy * dt;
+    tw.vx *= 0.97;
+    tw.vy *= 0.97;
+    tw.spin += tw.spinSpeed * dt;
+    tw.dmgTimer -= dt;
+
+    if (tw.dmgTimer <= 0) {
+      tw.dmgTimer = 0.45;
+      // 伤害树木
+      for (const tree of state.trees) {
+        if (tree.dead) continue;
+        if (dist(tw.x, tw.y, tree.x, tree.y) < tw.radius + 20) {
+          tree.hp = Math.max(0, tree.hp - 12);
+          if (tree.hp <= 0) tree.dead = true;
+          emitBurst(tree.x, tree.y - 15, '#cc66ff', 4, 45, 2);
+        }
+      }
+      // 伤害英雄
+      if (!state.hero.isDown) {
+        if (dist(tw.x, tw.y, state.hero.x, state.hero.y - 40) < tw.radius + 20) {
+          damageHero(10);
+        }
+      }
+    }
+  }
+  state.twisters = state.twisters.filter(tw => tw.ttl > 0);
+}
+
 function updatePlaying(dt) {
-  updateHero(dt);
-  updateTrees(dt);
-  updateEnemies(dt);
-  updateProjectiles(dt);
-  updateParticles(dt);
+  const gameDt = state.quizState ? dt * 0.12 : dt; // slow-mo during quiz
+  updateHero(gameDt);
+  updateTrees(gameDt);
+  updateSprites(gameDt);
+  updateEnemies(gameDt);
+  updateTwisters(gameDt);
+  updateUltPulses(gameDt);
+  updateProjectiles(gameDt);
+  updateParticles(gameDt);
+  updateFactoryFX(gameDt);
+  updateActiveCharms(dt);
   updateWave(dt);
 }
 
@@ -1130,11 +2372,12 @@ function drawBackground() {
     ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
   }
 
+  const cleanFactor = state.phase === 'victory' ? 1 - state.cleanReveal : 1;
   for (const patch of state.pollutions) {
-    const alpha = clamp(patch.toxin, 0, 1) * 0.25;
+    const alpha = clamp(patch.toxin, 0, 1) * 0.25 * cleanFactor;
+    if (alpha < 0.01) continue; // 跳过几乎透明的 patch，省去 createRadialGradient
     const g = ctx.createRadialGradient(patch.x, patch.y, 0, patch.x, patch.y, patch.radius);
-    const cleanFactor = state.phase === 'victory' ? 1 - state.cleanReveal : 1;
-    g.addColorStop(0, `rgba(132, 72, 164, ${alpha * cleanFactor})`);
+    g.addColorStop(0, `rgba(132, 72, 164, ${alpha})`);
     g.addColorStop(1, 'rgba(132, 72, 164, 0)');
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -1164,30 +2407,105 @@ function drawBackground() {
   }
 }
 
+function drawSprites() {
+  const t = performance.now() * 0.006;
+  for (const sp of state.sprites) {
+    // 尾迹
+    for (const tr of sp.trail) {
+      const a = clamp(tr.ttl / 0.35, 0, 1) * 0.55;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = '#a8ffc8';
+      ctx.beginPath();
+      ctx.arc(tr.x, tr.y - 10, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 精灵本体：简洁的发光小球 + 翅膀
+    const bob = Math.sin(t + sp.x * 0.02) * 4;
+    const sx = sp.x;
+    const sy = sp.y - 14 + bob;
+
+    // 光晕
+    const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, 14);
+    glow.addColorStop(0, 'rgba(180,255,210,0.55)');
+    glow.addColorStop(1, 'rgba(100,255,160,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 14, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 翅膀
+    const wingFlap = Math.sin(t * 4 + sp.x * 0.01) * 0.4;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = 'rgba(200,255,230,0.7)';
+    ctx.beginPath();
+    ctx.ellipse(-6, -1, 7, 3.5, -0.4 + wingFlap, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(6, -1, 7, 3.5, 0.4 - wingFlap, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // 身体
+    ctx.fillStyle = '#d4fff0';
+    ctx.beginPath();
+    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#7effc0';
+    ctx.beginPath();
+    ctx.arc(0, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawTrees() {
   for (const tree of state.trees) {
     if (tree.dead) continue;
     const health = tree.hp / tree.maxHp;
-    const sway = Math.sin(tree.sway) * 0.35;
+    const g = tree.growScale ?? 1;
+    const sway = Math.sin(tree.sway) * 0.35 * g;
+    const baseScale = tree.zone === 'enemy' ? CONFIG.visual.treeScale.enemy : CONFIG.visual.treeScale.sanctuary;
+    const drawScale = baseScale * g;
+
+    // 阴影跟随 growScale 缩放，并贴在格子中心
+    const shadowRx = CONFIG.visual.treeShadow.rx * g;
+    const shadowRy = CONFIG.visual.treeShadow.ry * g;
     ctx.save();
     ctx.fillStyle = `rgba(20, 18, 10, ${tree.zone === 'enemy' ? 0.22 : 0.3})`;
     ctx.beginPath();
-    ctx.ellipse(tree.x, tree.y + 2, CONFIG.visual.treeShadow.rx, CONFIG.visual.treeShadow.ry, 0, 0, Math.PI * 2);
+    ctx.ellipse(tree.x, tree.y + 2, shadowRx, shadowRy, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-    const treeScale = tree.zone === 'enemy' ? CONFIG.visual.treeScale.enemy : CONFIG.visual.treeScale.sanctuary;
-    if (!drawImageCentered(images.tree, tree.x, tree.y + 10 + sway, treeScale)) {
+
+    if (imageReady(images.tree)) {
+      const img = images.tree;
+      const w = img.width * drawScale;
+      const h = img.height * drawScale;
+      // 图片底部有 90px 空白（共 1155px），树根实际在底边往上 90/1155 处
+      // 用 bottomBlank 把锚点上移，让树根精确踩在 tree.y
+      const bottomBlank = (90 / 1155) * h;
+      ctx.save();
+      ctx.translate(tree.x + sway, tree.y + bottomBlank);
+      ctx.drawImage(img, -w / 2, -h, w, h);
+      ctx.restore();
+    } else {
       ctx.fillStyle = health > 0.5 ? '#4a8b38' : health > 0.2 ? '#88843a' : '#75614f';
       ctx.beginPath();
-      ctx.arc(tree.x, tree.y - 16, 18, 0, Math.PI * 2);
+      ctx.arc(tree.x, tree.y - 16 * g, 18 * g, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#6b4827';
-      ctx.fillRect(tree.x - 4, tree.y - 14, 8, 24);
+      ctx.fillRect(tree.x - 4 * g, tree.y - 14 * g, 8 * g, 24 * g);
     }
+
     if (tree.zone === 'enemy') {
       ctx.strokeStyle = 'rgba(170,255,170,0.32)';
       ctx.beginPath();
-      ctx.arc(tree.x, tree.y - 10, 38, 0, Math.PI * 2);
+      ctx.arc(tree.x, tree.y - 10 * g, 38 * g, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -1305,16 +2623,23 @@ function drawEnemies() {
       ctx.save();
       ctx.translate(enemy.x, enemy.y + bob);
       ctx.scale(flip, 1);
+      ctx.drawImage(sprite, -w / 2, -h, w, h);
       if (flash > 0) {
-        ctx.globalAlpha = 0.32 + flash * 2;
+        // 用 lighter 叠加白色闪光，只影响有像素的区域，不产生白框
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = flash * 3.5;
         ctx.drawImage(sprite, -w / 2, -h, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+      if (enemy.frozen) {
         ctx.globalCompositeOperation = 'source-atop';
-        ctx.fillStyle = '#ffffff';
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = '#a0e4ff';
         ctx.fillRect(-w / 2, -h, w, h);
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1;
       }
-      ctx.drawImage(sprite, -w / 2, -h, w, h);
       ctx.restore();
     }
     const pct = enemy.hp / enemy.maxHp;
@@ -1325,21 +2650,149 @@ function drawEnemies() {
   }
 }
 
+function drawSmokeParticles() {
+  for (const p of state.smokeParticles) {
+    ctx.globalAlpha = Math.max(0, p.alpha);
+    ctx.fillStyle = `rgb(${p.color})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, Math.max(1, p.size), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawProjectiles() {
   for (const p of state.projectiles) {
     const len = Math.hypot(p.vx, p.vy) || 1;
     const tx = (p.vx / len) * 16;
     const ty = (p.vy / len) * 16;
-    ctx.strokeStyle = 'rgba(255, 121, 255, 0.5)';
-    ctx.lineWidth = 4;
+    if (p.isPoison) {
+      // 毒气弹：颜色跟随弹丸 color（skull=绿，boss=紫）
+      const isPurple = p.color && p.color.startsWith('#aa');
+      const trailRgba = isPurple ? 'rgba(120,30,180,0.5)' : 'rgba(80,200,60,0.45)';
+      const coreRgba = isPurple
+        ? `rgba(160,50,220,${0.75 + 0.25 * Math.sin(performance.now() * 0.012)})`
+        : `rgba(100,230,80,${0.75 + 0.25 * Math.sin(performance.now() * 0.012)})`;
+      const rimRgba = isPurple ? 'rgba(200,100,255,0.6)' : 'rgba(180,255,140,0.6)';
+      const pulse = 0.75 + 0.25 * Math.sin(performance.now() * 0.012);
+      ctx.strokeStyle = trailRgba;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(p.x - tx, p.y - ty);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.fillStyle = coreRgba;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = rimRgba;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius * 1.4, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = 'rgba(255, 121, 255, 0.5)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(p.x - tx, p.y - ty);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawTwisters() {
+  for (const tw of state.twisters) {
+    const t = performance.now() * 0.001;
+    ctx.save();
+    ctx.translate(tw.x, tw.y);
+    ctx.rotate(tw.spin);
+    ctx.globalAlpha = tw.alpha;
+
+    // 外层大旋臂
+    for (let arm = 0; arm < 3; arm++) {
+      ctx.save();
+      ctx.rotate((arm / 3) * Math.PI * 2);
+      const grad = ctx.createLinearGradient(0, 0, tw.radius, 0);
+      grad.addColorStop(0, 'rgba(200,100,255,0.9)');
+      grad.addColorStop(0.5, 'rgba(160,60,230,0.5)');
+      grad.addColorStop(1, 'rgba(120,40,200,0)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 4.5;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(tw.radius * 0.5, -tw.radius * 0.4, tw.radius, 0);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 中心亮核
+    const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, tw.radius * 0.45);
+    coreGrad.addColorStop(0, 'rgba(255,200,255,0.95)');
+    coreGrad.addColorStop(0.4, 'rgba(190,80,255,0.7)');
+    coreGrad.addColorStop(1, 'rgba(140,40,220,0)');
+    ctx.fillStyle = coreGrad;
     ctx.beginPath();
-    ctx.moveTo(p.x - tx, p.y - ty);
-    ctx.lineTo(p.x, p.y);
-    ctx.stroke();
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.arc(0, 0, tw.radius * 0.45, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
+
+function drawUltPulses() {
+  const hero = state.hero;
+
+  // 冲刺残影
+  if (hero && hero.dashTrail && hero.dashTrail.length > 0) {
+    const set = images.hero[state.currentWeapon];
+    const sprite = set ? set.attack || set.idle : null;
+    if (imageReady(sprite)) {
+      const scale = CONFIG.visual.heroScale[state.currentWeapon] || CONFIG.visual.heroScale.sword;
+      for (let i = 0; i < hero.dashTrail.length; i++) {
+        const tr = hero.dashTrail[i];
+        const a = clamp(tr.ttl / tr.maxTtl, 0, 1);
+        const w = sprite.width * scale;
+        const h = sprite.height * scale;
+        ctx.save();
+        ctx.globalAlpha = a * 0.45;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.translate(tr.x, tr.y);
+        ctx.scale(hero.facing, 1);
+        ctx.drawImage(sprite, -w / 2, -h, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    }
+  }
+
+  // 净化中的敌人：绿色光晕闪烁溶解
+  for (const enemy of state.enemies) {
+    if (!enemy.purifying || enemy.dead) continue;
+    const sprite = enemySprite(enemy);
+    if (!imageReady(sprite)) continue;
+    const scale = enemyVisualScale(enemy.type);
+    const w = sprite.width * scale;
+    const h = sprite.height * scale;
+    const maxTimer = enemy.purifyLethal ? 0.65 : 0.25;
+    const t = clamp(enemy.purifyTimer / maxTimer, 0, 1);
+    const flicker = 0.5 + 0.5 * Math.sin(performance.now() * 0.022);
+    ctx.save();
+    ctx.translate(enemy.x, enemy.y);
+    ctx.globalAlpha = 0.3 + t * 0.7;
+    ctx.drawImage(sprite, -w / 2, -h, w, h);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = t * 0.55 * flicker;
+    ctx.drawImage(sprite, -w / 2, -h, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 }
 
@@ -1477,21 +2930,67 @@ function drawHud() {
   avatarBar(16, 14, 'hero', hero.hp, hero.maxHp, '#98e58f', 'HERO');
   avatarBar(16, 60, 'core', state.core.hp, CONFIG.core.maxHp, '#77e3ff', 'CORE');
 
-  function resourcePill(x, y, w, icon, value, tone) {
-    ctx.fillStyle = 'rgba(7, 12, 10, 0.32)';
-    ctx.fillRect(x, y, w, 34);
-    ctx.strokeStyle = 'rgba(236,255,238,0.12)';
-    ctx.strokeRect(x, y, w, 34);
-    drawUiGlyph(icon, x + 20, y + 17, 24, tone);
-    ctx.fillStyle = '#f6fff7';
-    ctx.font = 'bold 16px sans-serif';
+  // 右上角资源面板：四格并列一行
+  function drawChemLabel(x, cy, parts, tone) {
+    // parts: [{text, sub}] — sub=true 表示下标（字号小、下移）
     ctx.textAlign = 'left';
-    ctx.fillText(String(value), x + 40, y + 22);
+    let cx = x;
+    for (const part of parts) {
+      if (part.sub) {
+        ctx.font = 'bold 9px sans-serif';
+        ctx.fillStyle = tone;
+        ctx.fillText(part.text, cx, cy + 6);
+        cx += ctx.measureText(part.text).width + 1;
+      } else {
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillStyle = tone;
+        ctx.fillText(part.text, cx, cy + 4);
+        cx += ctx.measureText(part.text).width;
+      }
+    }
+    return cx;
+  }
+
+  function resourcePill(x, y, w, h, icon, value, tone, chemParts) {
+    ctx.fillStyle = 'rgba(7, 12, 10, 0.38)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(236,255,238,0.11)';
+    ctx.strokeRect(x, y, w, h);
+    const cy = y + h / 2;
+    if (chemParts) {
+      // 化学符号模式
+      const labelEnd = drawChemLabel(x + 8, cy, chemParts, tone);
+      ctx.fillStyle = tone;
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(String(value), labelEnd + 5, cy + 4);
+    } else {
+      drawUiGlyph(icon, x + 18, cy, 22, tone);
+      ctx.fillStyle = tone;
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(String(value), x + 34, cy + 5);
+    }
     ctx.textAlign = 'left';
   }
 
-  resourcePill(1028, 14, 74, 'coin', state.coins, '#ffe08b');
-  resourcePill(1110, 14, 74, 'heart', Math.max(hero.lives, 0), '#ff8e8e');
+  const pillH = 36, pillGap = 4;
+  const pillDefs = [
+    { icon: 'coin',  value: state.coins,                          tone: '#ffe08b', w: 76 },
+    { icon: 'heart', value: Math.max(hero.lives, 0),              tone: '#ff8e8e', w: 58 },
+    { chem: [{text:'CO'},{text:'2',sub:true}],
+      value: Math.floor(state.stats.co2) + ' kg',                 tone: '#7aefaa', w: 100 },
+    { chem: [{text:'H'},{text:'2',sub:true},{text:'O'}],
+      value: Math.floor(state.stats.toxin) + ' u',                tone: '#88ddff', w: 100 },
+  ];
+  // 从右边缘往左摆放
+  let pillX = CONFIG.width - 10;
+  for (let i = pillDefs.length - 1; i >= 0; i--) {
+    const p = pillDefs[i];
+    pillX -= p.w;
+    resourcePill(pillX, 10, p.w, pillH, p.icon, p.value, p.tone, p.chem || null);
+    if (i > 0) pillX -= pillGap;
+  }
 
   const plantReady = 1 - clamp(hero.plantCd / CONFIG.hero.plantCd, 0, 1);
   const ultCdReady = 1 - clamp(hero.ultCd / CONFIG.hero.ultCd, 0, 1);
@@ -1500,126 +2999,452 @@ function drawHud() {
   skillOrb(62, 572, 'F', 'seed', plantReady, '#8fe09a');
   skillOrb(146, 572, 'K', 'burst', ultReady, '#ffd783');
 
-  const shopCx = 1140;
-  const shopCy = 600;
+  const shopW = 72, shopH = 28;
+  const shopX = CONFIG.width - shopW - 14;
+  const shopY = CONFIG.height - shopH - 14;
   const shopReady = canAffordShop || state.shopOpen;
+  const shopR = shopH / 2;
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.003);
+  const pulseFast = 0.5 + 0.5 * Math.sin(performance.now() * 0.006);
+
+  function drawShopCapsulePath() {
+    ctx.beginPath();
+    ctx.moveTo(shopX + shopR, shopY);
+    ctx.arcTo(shopX + shopW, shopY, shopX + shopW, shopY + shopH, shopR);
+    ctx.arcTo(shopX + shopW, shopY + shopH, shopX, shopY + shopH, shopR);
+    ctx.arcTo(shopX, shopY + shopH, shopX, shopY, shopR);
+    ctx.arcTo(shopX, shopY, shopX + shopW, shopY, shopR);
+    ctx.closePath();
+  }
+
+  // 外层大光晕（渐变圆形叠加）
+  if (shopReady) {
+    const glowR = state.shopOpen ? 38 : 24 + pulse * 14;
+    const glowCx = shopX + shopW / 2;
+    const glowCy = shopY + shopH / 2;
+    const glowAlpha = state.shopOpen ? 0.32 : 0.18 + pulse * 0.16;
+    const outerGlow = ctx.createRadialGradient(glowCx, glowCy, 0, glowCx, glowCy, glowR + 18);
+    outerGlow.addColorStop(0, `rgba(255,220,80,${glowAlpha})`);
+    outerGlow.addColorStop(0.5, `rgba(255,180,40,${glowAlpha * 0.5})`);
+    outerGlow.addColorStop(1, 'rgba(255,140,0,0)');
+    ctx.fillStyle = outerGlow;
+    ctx.beginPath();
+    ctx.arc(glowCx, glowCy, glowR + 18, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 胶囊填充
   ctx.save();
-  ctx.shadowColor = shopReady ? 'rgba(255, 214, 110, 0.85)' : 'transparent';
-  ctx.shadowBlur = shopReady ? 20 : 0;
-  ctx.fillStyle = 'rgba(12, 16, 14, 0.38)';
-  ctx.beginPath();
-  ctx.arc(shopCx, shopCy, 28, 0, Math.PI * 2);
+  const grad = ctx.createLinearGradient(shopX, shopY, shopX, shopY + shopH);
+  if (state.shopOpen) {
+    grad.addColorStop(0, 'rgba(255,230,100,0.32)');
+    grad.addColorStop(1, 'rgba(180,130,10,0.26)');
+  } else {
+    grad.addColorStop(0, 'rgba(22,32,26,0.88)');
+    grad.addColorStop(1, 'rgba(10,16,12,0.78)');
+  }
+  ctx.fillStyle = grad;
+  drawShopCapsulePath();
   ctx.fill();
-  ctx.strokeStyle = shopReady ? 'rgba(255, 224, 139, 0.9)' : 'rgba(236,255,238,0.18)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(shopCx, shopCy, 28, 0, Math.PI * 2);
+  ctx.restore();
+
+  // 边框光晕（shadowBlur on stroke）
+  ctx.save();
+  if (shopReady) {
+    ctx.shadowColor = state.shopOpen ? '#ffe566' : `rgba(255,210,60,${0.7 + pulseFast * 0.3})`;
+    ctx.shadowBlur = state.shopOpen ? 20 : 12 + pulse * 12;
+  }
+  ctx.strokeStyle = shopReady
+    ? (state.shopOpen ? 'rgba(255,240,100,0.95)' : `rgba(255,${200 + Math.round(pulse * 50)},60,${0.75 + pulse * 0.25})`)
+    : 'rgba(180,210,190,0.18)';
+  ctx.lineWidth = state.shopOpen ? 2 : 1.5;
+  drawShopCapsulePath();
   ctx.stroke();
   ctx.restore();
-  drawUiGlyph('shopcart', shopCx, shopCy - 1, 24, shopReady ? '#ffe08b' : '#f0e7da');
-  ctx.fillStyle = '#effff2';
-  ctx.font = 'bold 13px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('Shop', shopCx, shopCy + 44);
+
+  // 图标 + 文字（带 shadowBlur 让字也发光）
+  ctx.save();
+  ctx.shadowColor = state.shopOpen ? '#ffe566' : `rgba(255,220,80,${0.5 + pulse * 0.4})`;
+  ctx.shadowBlur = state.shopOpen ? 14 : 8 + pulse * 8;
+  const iconX = shopX + 14;
+  const iconY = shopY + shopH / 2;
+  drawUiGlyph('shopcart', iconX, iconY, 22, shopReady ? (state.shopOpen ? '#ffe566' : '#ffd783') : '#a8c0b0');
+  ctx.fillStyle = shopReady ? (state.shopOpen ? '#ffe566' : '#e8f5ec') : '#90a898';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('SHOP', iconX + 12, iconY + 4);
+  ctx.restore();
+
+  if (shopReady && !state.shopOpen) {
+    ctx.fillStyle = `rgba(255,220,80,${0.5 + pulse * 0.4})`;
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('B', shopX + shopW - 6, shopY + shopH - 5);
+  }
   ctx.textAlign = 'left';
 
-  state.shopButtonRect = { x: shopCx - 28, y: shopCy - 28, w: 56, h: 56 };
+  state.shopButtonRect = { x: shopX, y: shopY, w: shopW, h: shopH };
   state.loadoutButtonRect = null;
 
 }
 
 function drawWaveOverlay() {
-  return;
+  const wi = state.waveIntro;
+  const wiMax = state.waveIntroMax || 2.0;
+  const isBossWave = state.waveIndex >= 1;
+
+  // break 倒计时条
+  if (state.waveState === 'break' && state.phase === 'playing') {
+    const pct = clamp(state.waveTimer / CONFIG.breakDuration, 0, 1);
+    const barW = 320, barH = 10;
+    const bx = CONFIG.width / 2 - barW / 2;
+    const by = CONFIG.height - 48;
+    // 背景
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(bx - 2, by - 2, barW + 4, barH + 4);
+    // 进度
+    const barColor = pct > 0.5 ? '#7aff8e' : pct > 0.25 ? '#ffe066' : '#ff6b6b';
+    ctx.fillStyle = barColor;
+    ctx.fillRect(bx, by, barW * pct, barH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.strokeRect(bx - 2, by - 2, barW + 4, barH + 4);
+    // 倒计时数字
+    const secs = Math.ceil(state.waveTimer);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Next wave in ${secs}s`, CONFIG.width / 2, by - 8);
+    // 下一波提示
+    const nextWave = state.waveIndex + 2;
+    if (nextWave <= CONFIG.waves.length) {
+      const warning = nextWave === 3 ? '⚠ BOSS INCOMING' : nextWave === 2 ? '⚠ MINIBOSS INCOMING' : '';
+      if (warning) {
+        const pulse = 0.6 + 0.4 * Math.sin(performance.now() * 0.005);
+        ctx.fillStyle = `rgba(255,90,70,${pulse})`;
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(warning, CONFIG.width / 2, by - 26);
+      }
+    }
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // Wave intro 入场动画
+  if (wi <= 0 || state.phase !== 'playing') return;
+  const t = clamp(wi / wiMax, 0, 1); // 1=开始 0=结束
+  const tIn = clamp((wiMax - wi) / 0.4, 0, 1);  // 0→1 淡入
+  const tOut = clamp(wi / 0.5, 0, 1);            // 1→0 淡出
+
+  const alpha = Math.min(tIn, tOut);
+
+  if (isBossWave) {
+    // 全屏压暗红色
+    ctx.fillStyle = `rgba(60,0,0,${alpha * 0.55})`;
+    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+
+    // 全屏渐进压暗（入场时从右到左）
+    const sweepX = CONFIG.width * (1 - clamp((wiMax - wi) / 0.6, 0, 1));
+    ctx.fillStyle = `rgba(255,60,40,${alpha * 0.12})`;
+    ctx.fillRect(0, 0, sweepX, CONFIG.height);
+
+    // 主标题
+    const waveNum = state.waveIndex + 1;
+    const title = waveNum === 3 ? 'FINAL WAVE' : `WAVE ${waveNum}`;
+    const titleY = CONFIG.height / 2 - 30;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = '#ff3a20';
+    ctx.shadowBlur = 40;
+    ctx.fillStyle = '#ff4422';
+    ctx.font = `bold ${Math.round(72 + (1 - alpha) * 18)}px Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(title, CONFIG.width / 2, titleY);
+    ctx.shadowBlur = 0;
+
+    // 副标题
+    const subtitle = waveNum === 3 ? 'THE BOSS AWAKENS' : 'MINIBOSS DETECTED';
+    ctx.fillStyle = `rgba(255,200,180,${alpha})`;
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(subtitle, CONFIG.width / 2, titleY + 42);
+
+    ctx.restore();
+
+  } else {
+    // Wave 1：简洁绿色入场
+    ctx.fillStyle = `rgba(0,20,10,${alpha * 0.35})`;
+    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = '#7aff8e';
+    ctx.shadowBlur = 24;
+    ctx.fillStyle = '#e8ffe0';
+    ctx.font = 'bold 68px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('WAVE 1', CONFIG.width / 2, CONFIG.height / 2 - 20);
+    ctx.fillStyle = 'rgba(200,255,210,0.85)';
+    ctx.font = '20px sans-serif';
+    ctx.shadowBlur = 0;
+    ctx.fillText('Defend the Pure Core', CONFIG.width / 2, CONFIG.height / 2 + 22);
+    ctx.restore();
+  }
+  ctx.textAlign = 'left';
 }
 
 function drawMessages() {
-  return;
+  for (const m of state.messages) {
+    const a = clamp(m.ttl * 1.5, 0, 1);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = m.color;
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(m.text, CONFIG.width / 2, m.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left';
 }
 
 function drawShop() {
   if (!state.shopOpen || state.phase !== 'playing') return;
-  ctx.fillStyle = 'rgba(5, 10, 8, 0.84)';
-  ctx.fillRect(180, 72, 840, 470);
+
+  // 面板背景
+  ctx.fillStyle = 'rgba(5, 10, 8, 0.88)';
+  ctx.fillRect(160, 60, 880, 510);
   ctx.strokeStyle = '#75b682';
-  ctx.strokeRect(180, 72, 840, 470);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(160, 60, 880, 510);
+
+  // 标题行
   ctx.fillStyle = '#effff1';
-  ctx.font = 'bold 26px sans-serif';
+  ctx.font = 'bold 26px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Field Armory', 600, 108);
-  ctx.font = '15px sans-serif';
+  ctx.fillText('Field Armory', 600, 98);
+  // 金币
+  ctx.font = 'bold 15px sans-serif';
   ctx.fillStyle = '#ffd17f';
-  drawUiGlyph('coin', 540, 128, 18, '#ffe08b');
-  ctx.fillText(`${state.coins}`, 590, 132);
+  drawUiGlyph('coin', 730, 92, 18, '#ffe08b');
+  ctx.textAlign = 'left';
+  ctx.fillText(`${state.coins}  coins`, 742, 96);
+
+  // 分割线
+  ctx.strokeStyle = 'rgba(120,200,140,0.22)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(180, 108); ctx.lineTo(1020, 108); ctx.stroke();
+
+  // ── 武器卡片 ──────────────────────────────────────────────
+  const CARD_W = 240, CARD_H = 230;
+  const CARD_GAP = 18;
+  const CARDS_TOTAL = 3 * CARD_W + 2 * CARD_GAP;
+  const CARD_START_X = Math.round((1200 - CARDS_TOTAL) / 2);  // 居中
+  const CARD_Y = 122;
+  const IMG_H = 108;  // 图片区高度
+
+  // 武器描述标语
+  const weaponTagline = {
+    firesword: 'Burns through armor. Spread fire.',
+    icesword:  'Slows the horde. Control the field.',
+    staff:     'Twin bolts. Maximum reach.'
+  };
+  const weaponTraits = {
+    firesword: [
+      { icon: 'burst', color: '#ffefc2', label: 'ATK',   value: id => `${CONFIG.weapons[id].dmg}` },
+      { icon: 'flameSword', color: '#ff9a57', label: 'BURN',  value: id => `${CONFIG.weapons[id].burn}/s` },
+      { icon: 'burst', color: '#aaddff', label: 'RANGE', value: () => 'Splash' }
+    ],
+    icesword: [
+      { icon: 'burst', color: '#ffefc2', label: 'ATK',   value: id => `${CONFIG.weapons[id].dmg}` },
+      { icon: 'iceSword', color: '#a8e6ff', label: 'SLOW',  value: id => `${Math.round(CONFIG.weapons[id].slow * 100)}%` },
+      { icon: 'burst', color: '#aaddff', label: 'RANGE', value: () => 'Melee+' }
+    ],
+    staff: [
+      { icon: 'burst', color: '#ffefc2', label: 'ATK',   value: id => `${CONFIG.weapons[id].dmg}×2` },
+      { icon: 'flameSword', color: '#ff9a57', label: 'BURN',  value: id => `${CONFIG.weapons[id].burn}/s` },
+      { icon: 'iceSword', color: '#a8e6ff', label: 'SLOW',  value: id => `${Math.round(CONFIG.weapons[id].slow * 100)}%` }
+    ]
+  };
+
   const ids = ['firesword', 'icesword', 'staff'];
   ids.forEach((id, i) => {
     const weapon = CONFIG.weapons[id];
-    const x = 214 + i * 258;
-    const y = 156;
+    const x = CARD_START_X + i * (CARD_W + CARD_GAP);
+    const y = CARD_Y;
     const owned = state.ownedWeapons.includes(id);
     const affordable = state.coins >= weapon.unlockCost;
-    ctx.fillStyle = owned ? 'rgba(38, 98, 52, 0.9)' : affordable ? 'rgba(50, 58, 42, 0.95)' : 'rgba(28, 32, 30, 0.94)';
-    ctx.fillRect(x, y, 224, 178);
-    ctx.strokeStyle = owned ? weapon.slash : affordable ? '#ffe08b' : 'rgba(255,255,255,0.12)';
-    ctx.strokeRect(x, y, 224, 178);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 16px sans-serif';
+    const active = state.currentWeapon === id;
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.003 + i * 1.2);
+
+    // 卡片底色 + 光晕
+    ctx.save();
+    if (owned) {
+      ctx.shadowColor = weapon.slash;
+      ctx.shadowBlur = 16 + pulse * 10;
+    } else if (affordable) {
+      ctx.shadowColor = `rgba(255,220,80,${0.55 + pulse * 0.4})`;
+      ctx.shadowBlur = 14 + pulse * 12;
+    }
+    ctx.fillStyle = owned
+      ? (active ? 'rgba(44,110,58,0.96)' : 'rgba(32,80,44,0.92)')
+      : affordable ? 'rgba(46,54,38,0.96)' : 'rgba(24,28,26,0.94)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, CARD_W, CARD_H, 8);
+    ctx.fill();
+    ctx.strokeStyle = owned
+      ? (active ? '#fff0a2' : weapon.slash)
+      : affordable ? `rgba(255,${200 + Math.round(pulse * 55)},80,${0.7 + pulse * 0.28})` : 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = active ? 2 : 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x, y, CARD_W, CARD_H, 8);
+    ctx.stroke();
+    ctx.restore();
+
+    // 图片区域底色（略深）
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.roundRect(x + 6, y + 6, CARD_W - 12, IMG_H, 6);
+    ctx.fill();
+
+    // 武器图片（放大居中）
+    drawWeaponThumb(id, x + 6, y + 6, CARD_W - 12, IMG_H);
+
+    // 武器名
+    ctx.fillStyle = owned ? (active ? '#fff8c0' : '#dfffea') : affordable ? '#f0ffe8' : '#b0bab4';
+    ctx.font = `bold 15px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(weapon.name, x + CARD_W / 2, y + IMG_H + 22);
+
+    // 标语（斜体小字）
+    const tagline = weaponTagline[id] || '';
+    ctx.fillStyle = owned ? 'rgba(200,255,220,0.7)' : affordable ? 'rgba(220,240,200,0.6)' : 'rgba(160,170,160,0.5)';
+    ctx.font = 'italic 11px sans-serif';
+    ctx.fillText(tagline, x + CARD_W / 2, y + IMG_H + 38);
+
+    // 属性行
+    const traits = weaponTraits[id] || [];
+    const traitY0 = y + IMG_H + 56;
+    const traitSpacing = 26;
     ctx.textAlign = 'left';
-    drawWeaponThumb(id, x + 8, y + 8, 64, 42);
-    ctx.fillText(weapon.name, x + 74, y + 24);
-    ctx.font = '13px sans-serif';
-    drawUiGlyph('burst', x + 24, y + 58, 16, '#ffefc2');
-    ctx.fillText(`${weapon.dmg}`, x + 42, y + 62);
-    if (weapon.burn) {
-      drawUiGlyph('flameSword', x + 24, y + 88, 15, '#ff9a57');
-      ctx.fillText(`${weapon.burn}/s`, x + 42, y + 92);
+    traits.forEach((tr, ti) => {
+      const ty = traitY0 + ti * traitSpacing;
+      drawUiGlyph(tr.icon, x + 20, ty, 14, tr.color);
+      ctx.fillStyle = 'rgba(200,220,200,0.7)';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(tr.label, x + 34, ty + 4);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(tr.value(id), x + CARD_W - 12, ty + 4);
+      ctx.textAlign = 'left';
+    });
+
+    // 底部价格/状态横条
+    const barY = y + CARD_H - 32;
+    ctx.fillStyle = owned
+      ? (active ? 'rgba(255,230,80,0.18)' : 'rgba(80,180,100,0.18)')
+      : affordable ? 'rgba(255,210,60,0.14)' : 'rgba(60,60,60,0.3)';
+    ctx.beginPath();
+    ctx.roundRect(x + 6, barY, CARD_W - 12, 26, 5);
+    ctx.fill();
+
+    ctx.textAlign = 'center';
+    if (owned) {
+      ctx.fillStyle = active ? '#fff0a2' : '#9fffb8';
+      ctx.font = `bold 13px sans-serif`;
+      ctx.fillText(active ? '✦ Equipped' : 'Equip', x + CARD_W / 2, barY + 17);
+    } else if (affordable) {
+      drawUiGlyph('coin', x + CARD_W / 2 - 28, barY + 13, 14, '#ffe08b');
+      ctx.fillStyle = '#ffe08b';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText(`Buy  ${weapon.unlockCost}`, x + CARD_W / 2 + 6, barY + 17);
+    } else {
+      ctx.fillStyle = '#888';
+      ctx.font = '12px sans-serif';
+      drawUiGlyph('coin', x + CARD_W / 2 - 30, barY + 13, 13, '#888');
+      ctx.fillText(`${weapon.unlockCost}  Locked`, x + CARD_W / 2 + 4, barY + 17);
     }
-    if (weapon.slow) {
-      drawUiGlyph('iceSword', x + 24, y + 116, 15, '#a8e6ff');
-      ctx.fillText(`${Math.round(weapon.slow * 100)}%`, x + 42, y + 120);
-    }
-    ctx.fillStyle = owned ? '#d8ffe1' : affordable ? '#ffe08b' : '#c2b6ad';
-    ctx.font = 'bold 14px sans-serif';
-    drawUiGlyph('coin', x + 24, y + 148, 15, owned ? '#d8ffe1' : '#ffe08b');
-    ctx.fillText(owned ? (state.currentWeapon === id ? 'Equipped' : 'Owned') : `${weapon.unlockCost}`, x + 42, y + 152);
-    ctx.fillStyle = owned ? '#e7fff0' : affordable ? '#fff5d2' : '#d6cfc7';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillText(owned ? (state.currentWeapon === id ? 'Active' : 'Equip') : affordable ? 'Buy' : 'Locked', x + 14, y + 172);
-    weapon._shopRect = { x, y, w: 224, h: 178 };
+    ctx.textAlign = 'left';
+
+    weapon._shopRect = { x, y, w: CARD_W, h: CARD_H };
   });
+
+  // ── 树木升级卡片 ──────────────────────────────────────────
+  // 分割线
+  ctx.strokeStyle = 'rgba(120,200,140,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(180, CARD_Y + CARD_H + 18); ctx.lineTo(1020, CARD_Y + CARD_H + 18); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(160,230,170,0.55)';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('ECOLOGY UPGRADES', 196, CARD_Y + CARD_H + 34);
+
   const treeCards = [
-    { id: 'tree2', label: 'Oak Upgrade', cost: 100, desc1: 'All trees gain +50% HP', desc2: 'CO2 and cleanse x1.5', tier: 2 },
-    { id: 'tree3', label: 'Sacred Life Tree', cost: 200, desc1: 'All trees gain +100% HP', desc2: 'CO2 x2.0 and heal x1.5', tier: 3 }
+    { id: 'tree2', label: 'Oak Upgrade',      cost: 100, tier: 2,
+      traits: ['+50% tree HP', 'x1.5 CO2 absorb', 'x1.2 core heal'] },
+    { id: 'tree3', label: 'Sacred Life Tree', cost: 200, tier: 3,
+      traits: ['+100% tree HP', 'x2.0 CO2 absorb', 'x1.5 core heal'] }
   ];
+  const TC_W = 290, TC_H = 108;
+  const TC_Y = CARD_Y + CARD_H + 42;
+  const TC_START_X = Math.round((1200 - (2 * TC_W + CARD_GAP)) / 2);
+
   treeCards.forEach((card, i) => {
-    const x = 332 + i * 268;
-    const y = 366;
+    const x = TC_START_X + i * (TC_W + CARD_GAP);
+    const y = TC_Y;
     const owned = state.treeTier >= card.tier;
     const affordable = state.coins >= card.cost;
-    ctx.fillStyle = owned ? 'rgba(46, 106, 68, 0.9)' : affordable ? 'rgba(50, 58, 42, 0.95)' : 'rgba(28, 32, 30, 0.94)';
-    ctx.fillRect(x, y, 240, 116);
-    ctx.strokeStyle = owned ? '#9fe6a2' : affordable ? '#ffe08b' : 'rgba(255,255,255,0.12)';
-    ctx.strokeRect(x, y, 240, 116);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 16px sans-serif';
+    const pulse2 = 0.5 + 0.5 * Math.sin(performance.now() * 0.003 + i * 2.1 + 0.8);
+
+    ctx.save();
+    if (owned) {
+      ctx.shadowColor = '#9fe6a2';
+      ctx.shadowBlur = 12 + pulse2 * 6;
+    } else if (affordable) {
+      ctx.shadowColor = `rgba(255,220,80,${0.5 + pulse2 * 0.4})`;
+      ctx.shadowBlur = 10 + pulse2 * 12;
+    }
+    ctx.fillStyle = owned ? 'rgba(42,96,60,0.92)' : affordable ? 'rgba(46,54,38,0.96)' : 'rgba(24,28,26,0.94)';
+    ctx.beginPath(); ctx.roundRect(x, y, TC_W, TC_H, 7); ctx.fill();
+    ctx.strokeStyle = owned ? '#9fe6a2' : affordable ? `rgba(255,${200 + Math.round(pulse2 * 55)},80,${0.7 + pulse2 * 0.28})` : 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x, y, TC_W, TC_H, 7); ctx.stroke();
+    ctx.restore();
+
+    // 图标 + 标题
+    drawUiGlyph('seed', x + 24, y + 22, 22, owned ? '#c0ffcc' : '#9fe6a2');
+    ctx.fillStyle = owned ? '#d0ffdc' : affordable ? '#efffef' : '#90a898';
+    ctx.font = 'bold 15px sans-serif';
     ctx.textAlign = 'left';
-    drawUiGlyph('seed', x + 24, y + 22, 20, '#9fe6a2');
-    ctx.fillText(card.label, x + 42, y + 24);
-    ctx.font = '13px sans-serif';
-    drawUiGlyph('heart', x + 24, y + 48, 14, '#ff8f8f');
-    ctx.fillText(card.tier === 2 ? '+50% tree HP' : '+100% tree HP', x + 42, y + 52);
-    drawUiGlyph('co2', x + 24, y + 72, 14, '#8de38c');
-    ctx.fillText(card.tier === 2 ? 'x1.5 cleanse' : 'x2.0 cleanse', x + 42, y + 76);
-    ctx.fillStyle = owned ? '#d8ffe1' : affordable ? '#ffe08b' : '#c2b6ad';
-    ctx.font = 'bold 14px sans-serif';
-    drawUiGlyph('coin', x + 24, y + 96, 15, owned ? '#d8ffe1' : '#ffe08b');
-    ctx.fillText(owned ? 'Purchased' : `${card.cost}`, x + 42, y + 100);
-    card._shopRect = { x, y, w: 240, h: 116 };
+    ctx.fillText(card.label, x + 42, y + 26);
+
+    // 三条特性
+    card.traits.forEach((t, ti) => {
+      ctx.fillStyle = owned ? 'rgba(200,255,215,0.8)' : affordable ? 'rgba(210,240,200,0.7)' : 'rgba(150,160,150,0.55)';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(`• ${t}`, x + 18, y + 48 + ti * 17);
+    });
+
+    // 价格/状态
+    ctx.textAlign = 'right';
+    if (owned) {
+      ctx.fillStyle = '#9fe6a2';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText('✦ Purchased', x + TC_W - 12, y + TC_H - 10);
+    } else {
+      drawUiGlyph('coin', x + TC_W - 68, y + TC_H - 18, 14, affordable ? '#ffe08b' : '#888');
+      ctx.fillStyle = affordable ? '#ffe08b' : '#888';
+      ctx.font = `bold 13px sans-serif`;
+      ctx.fillText(`${card.cost}`, x + TC_W - 12, y + TC_H - 10);
+    }
+    ctx.textAlign = 'left';
+
+    card._shopRect = { x, y, w: TC_W, h: TC_H };
     state[card.id + 'Rect'] = card._shopRect;
   });
+
+  // 底部提示
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#c0e6c6';
-  ctx.font = '14px sans-serif';
-  ctx.fillText('Click a card to buy or equip. Press B to close.', 600, 516);
+  ctx.fillStyle = 'rgba(160,210,170,0.55)';
+  ctx.font = '13px sans-serif';
+  ctx.fillText('Click a card to buy · equip · upgrade    [B] close', 600, 554);
   ctx.textAlign = 'left';
 }
 
@@ -1668,50 +3493,184 @@ function drawLoadoutPanel() {
 }
 
 function drawStart() {
+  const T = performance.now() * 0.001;
+  const pulse = 0.5 + 0.5 * Math.sin(T * 1.6);
+  const pulse2 = 0.5 + 0.5 * Math.sin(T * 1.1 + 1.2);
+
   drawBackground();
-  ctx.fillStyle = 'rgba(6, 10, 12, 0.62)';
+
+  // 全屏暗化
+  ctx.fillStyle = 'rgba(4, 8, 10, 0.72)';
   ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
-  ctx.fillStyle = 'rgba(156, 255, 184, 0.12)';
-  ctx.fillRect(80, 70, 340, 500);
-  ctx.fillStyle = 'rgba(219, 116, 164, 0.12)';
-  ctx.fillRect(780, 70, 340, 500);
-  drawImageCentered(images.hero.sword.idle, 290, 520, CONFIG.visual.startScale.hero, 1);
-  drawImageCentered(images.enemy.boss[0], 930, 548, CONFIG.visual.startScale.boss, -1);
-  ctx.fillStyle = '#e6fff0';
-  ctx.font = 'bold 56px Georgia, serif';
+
+  // 共用脚线 y 坐标，英雄和 boss 底部对齐
+  const groundY = 560;
+  const heroScale  = 0.68;   // 英雄：380px高 × 0.68 = 258px
+  const bossScale  = 0.37;   // boss：1295px高 × 0.37 = 479px，刚好填满画面高度
+
+  // ── 左侧英雄光晕区 ──
+  const heroX = 230;
+  const hGlow = ctx.createRadialGradient(heroX, groundY - 160, 10, heroX, groundY - 160, 170);
+  hGlow.addColorStop(0, `rgba(100,255,160,${0.22 + pulse * 0.10})`);
+  hGlow.addColorStop(1, 'rgba(60,180,100,0)');
+  ctx.fillStyle = hGlow;
+  ctx.beginPath();
+  ctx.ellipse(heroX, groundY - 160, 170, 210, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 英雄脚下阴影椭圆
+  ctx.save();
+  ctx.shadowColor = '#60ff9e';
+  ctx.shadowBlur = 24 + pulse * 12;
+  ctx.strokeStyle = `rgba(100,255,160,${0.38 + pulse * 0.22})`;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.ellipse(heroX, groundY - 8, 58, 14, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  drawImageCentered(images.hero.sword.idle, heroX, groundY, heroScale, 1);
+
+  // ── 右侧 boss 光晕区 ──
+  const bossX = 970;
+  const bGlow = ctx.createRadialGradient(bossX, groundY - 210, 10, bossX, groundY - 210, 260);
+  bGlow.addColorStop(0, `rgba(160,60,220,${0.24 + pulse2 * 0.12})`);
+  bGlow.addColorStop(1, 'rgba(80,20,120,0)');
+  ctx.fillStyle = bGlow;
+  ctx.beginPath();
+  ctx.ellipse(bossX, groundY - 210, 260, 310, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // boss 脚下阴影椭圆
+  ctx.save();
+  ctx.shadowColor = '#c060ff';
+  ctx.shadowBlur = 32 + pulse2 * 18;
+  ctx.strokeStyle = `rgba(180,80,255,${0.32 + pulse2 * 0.20})`;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.ellipse(bossX, groundY - 8, 88, 22, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  drawImageCentered(images.enemy.bossIdle, bossX, groundY, bossScale, 1);
+
+  // ── 顶部标题 ──
   ctx.textAlign = 'center';
-  ctx.fillText('Green Shield Guardian', 600, 92);
-  ctx.fillStyle = '#d4f9dd';
-  ctx.font = '18px sans-serif';
-  ctx.fillText('Protect the Pure Core. Push back the factory horde. Restore the poisoned land.', 600, 128);
-  ctx.fillStyle = '#fff0a8';
-  ctx.font = 'bold 74px Georgia, serif';
-  ctx.fillText('VS', 600, 258);
-  ctx.fillStyle = 'rgba(8, 14, 12, 0.78)';
-  ctx.fillRect(340, 340, 520, 160);
-  ctx.strokeStyle = 'rgba(188,255,204,0.28)';
-  ctx.strokeRect(340, 340, 520, 160);
-  const lines = [
-    'Move with WASD or Arrow Keys',
-    'Press J to attack, K to unleash your ultimate',
-    'Press F to plant a tree wherever your hero stands',
-    'Press B to open the field armory between waves'
-  ];
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 18px sans-serif';
-  ctx.fillText('Mission Brief', 600, 370);
-  ctx.font = '16px sans-serif';
-  lines.forEach((line, i) => ctx.fillText(line, 600, 404 + i * 24));
-  ctx.fillStyle = '#1e8e4a';
-  ctx.fillRect(452, 536, 296, 58);
-  ctx.strokeStyle = '#c1ffd6';
-  ctx.strokeRect(452, 536, 296, 58);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 25px sans-serif';
-  ctx.fillText('Start Mission', 600, 574);
-  ctx.fillStyle = '#bde7c9';
+  ctx.save();
+  ctx.shadowColor = '#60ffaa';
+  ctx.shadowBlur = 32 + pulse * 16;
+  ctx.fillStyle = '#e8fff2';
+  ctx.font = 'bold 60px Georgia, serif';
+  ctx.fillText('Green Shield Guardian', 600, 76);
+  ctx.restore();
+
+  // 副标题
+  ctx.fillStyle = `rgba(180,255,210,${0.6 + pulse * 0.2})`;
+  ctx.font = '17px sans-serif';
+  ctx.fillText('Protect the Pure Core · Restore the poisoned land', 600, 108);
+
+  // 分隔线
+  const lineAlpha = 0.18 + pulse * 0.08;
+  ctx.strokeStyle = `rgba(100,220,140,${lineAlpha})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(200, 120); ctx.lineTo(1000, 120); ctx.stroke();
+
+  // ── VS 徽章 ──
+  const vsY = 230;
+  ctx.save();
+  ctx.shadowColor = '#ffdd44';
+  ctx.shadowBlur = 40 + pulse * 20;
+  ctx.fillStyle = `rgba(255,230,60,${0.88 + pulse * 0.12})`;
+  ctx.font = `bold ${Math.round(78 + pulse * 4)}px Georgia, serif`;
+  ctx.fillText('VS', 600, vsY);
+  ctx.restore();
+
+  // VS 下方小字
+  ctx.fillStyle = 'rgba(255,210,100,0.55)';
   ctx.font = '13px sans-serif';
-  ctx.fillText('Click anywhere to begin', 600, 616);
+  ctx.fillText('Nature vs Industry', 600, vsY + 20);
+
+  // ── 中央 Mission Brief 卡片 ──
+  const cardX = 368, cardY = 268, cardW = 464, cardH = 196;
+  ctx.save();
+  ctx.shadowColor = 'rgba(80,200,120,0.3)';
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = 'rgba(6, 14, 10, 0.82)';
+  ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 10); ctx.fill();
+  ctx.strokeStyle = 'rgba(100,200,130,0.28)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 10); ctx.stroke();
+  ctx.restore();
+
+  // 卡片标题
+  ctx.fillStyle = '#c8ffda';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('— HOW TO PLAY —', 600, cardY + 24);
+
+  const controls = [
+    { key: 'WASD', desc: 'Move hero' },
+    { key: 'J',    desc: 'Attack' },
+    { key: 'K',    desc: 'Ultimate  (needs 60% HP)' },
+    { key: 'F',    desc: 'Plant a tree' },
+    { key: 'B',    desc: 'Open armory' },
+    { key: 'M',    desc: 'Mute / unmute' },
+  ];
+  const colW = cardW / 2 - 16;
+  controls.forEach((c, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const cx = cardX + 16 + col * (colW + 32);
+    const cy = cardY + 50 + row * 40;
+
+    // 按键胶囊
+    ctx.fillStyle = 'rgba(60,90,70,0.85)';
+    ctx.beginPath(); ctx.roundRect(cx, cy - 13, 44, 22, 5); ctx.fill();
+    ctx.strokeStyle = 'rgba(140,220,160,0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(cx, cy - 13, 44, 22, 5); ctx.stroke();
+    ctx.fillStyle = '#d8ffe4';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(c.key, cx + 22, cy + 3);
+
+    ctx.fillStyle = 'rgba(200,230,210,0.75)';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(c.desc, cx + 52, cy + 3);
+  });
+
+  // ── 开始按钮 ──
+  const btnW = 220, btnH = 52, btnX = 600 - btnW / 2, btnY = 490;
+  const btnR = btnH / 2;
+  ctx.save();
+  ctx.shadowColor = '#44ff88';
+  ctx.shadowBlur = 22 + pulse * 18;
+  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+  btnGrad.addColorStop(0, `rgba(30,160,80,${0.92 + pulse * 0.08})`);
+  btnGrad.addColorStop(1, `rgba(16,100,50,${0.88 + pulse * 0.08})`);
+  ctx.fillStyle = btnGrad;
+  ctx.beginPath(); ctx.roundRect(btnX, btnY, btnW, btnH, btnR); ctx.fill();
+  ctx.strokeStyle = `rgba(140,255,180,${0.6 + pulse * 0.4})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(btnX, btnY, btnW, btnH, btnR); ctx.stroke();
+  ctx.restore();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('▶  Start Mission', 600, btnY + 33);
+
+  // 底部提示
+  ctx.fillStyle = `rgba(160,210,175,${0.38 + pulse * 0.12})`;
+  ctx.font = '13px sans-serif';
+  ctx.fillText('Click anywhere or press Enter to begin', 600, btnY + btnH + 22);
+
+  // 署名
+  ctx.fillStyle = 'rgba(180,225,200,0.65)';
+  ctx.font = '17px Georgia, serif';
+  ctx.fillText('designed by Patrick Hanxiu DENG', 600, CONFIG.height - 14);
+
   ctx.textAlign = 'left';
 }
 
@@ -1749,41 +3708,166 @@ function drawVictory(dt) {
   drawParticles();
   ctx.fillStyle = `rgba(255,255,255,${clamp(state.victoryTimer / 3, 0, 0.1)})`;
   ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+
+  // Initial fanfare (first 3 seconds)
   if (state.victoryTimer < 3) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
     ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
     ctx.fillStyle = '#efffc5';
     ctx.font = 'bold 76px Georgia, serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Victory', 600, 234);
-    ctx.font = '20px sans-serif';
+    ctx.fillText('Victory!', 600, 230);
+    ctx.font = '20px Georgia, serif';
     ctx.fillStyle = '#f5ffe3';
-    ctx.fillText('The polluted factory frontier is being reclaimed.', 600, 276);
+    ctx.fillText('The polluted factory frontier is being reclaimed.', 600, 278);
     ctx.textAlign = 'left';
     return;
   }
-  ctx.fillStyle = 'rgba(4, 10, 8, 0.76)';
-  ctx.fillRect(330, 136, 540, 380);
-  ctx.strokeStyle = '#b9ffd1';
-  ctx.strokeRect(330, 136, 540, 380);
-  ctx.fillStyle = '#efffc5';
-  ctx.font = 'bold 64px Georgia, serif';
+
+  const wrongs = state.wrongAnswers;
+  const hasWrongs = wrongs.length > 0;
+
+  // Layout: left panel = stats, right panel = eco review (if any wrongs)
+  const panelY = 80, panelH = 490;
+  const leftX = hasWrongs ? 30  : 330;
+  const leftW = hasWrongs ? 330 : 540;
+  const rightX = 380, rightW = 790;
+
+  // ── Left panel: game stats ────────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(4, 10, 6, 0.82)';
+  ctx.beginPath();
+  ctx.roundRect(leftX, panelY, leftW, panelH, 14);
+  ctx.fill();
+  ctx.strokeStyle = '#7adb9a';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Victory title
   ctx.textAlign = 'center';
-  ctx.fillText('Victory', 600, 208);
-  ctx.fillStyle = '#f0fff2';
-  ctx.font = '18px sans-serif';
-  ctx.fillText(`Waves Cleared: ${CONFIG.waves.length}`, 600, 262);
-  ctx.fillText(`Coins Collected: ${state.coins}`, 600, 292);
-  ctx.fillText(`Enemies Defeated: ${state.kills}`, 600, 322);
-  ctx.fillText(`CO2 Absorbed: ${state.stats.co2.toFixed(0)} kg`, 600, 352);
-  ctx.fillText(`Toxin Cleared: ${state.stats.toxin.toFixed(0)} u`, 600, 382);
+  ctx.fillStyle = '#d8ffb0';
+  ctx.font = 'bold 44px Georgia, serif';
+  ctx.fillText('Victory!', leftX + leftW / 2, panelY + 58);
+
+  ctx.fillStyle = '#a8ddb5';
+  ctx.font = '14px Georgia, serif';
+  ctx.fillText('The factory is reclaimed.', leftX + leftW / 2, panelY + 82);
+
+  // Divider
+  ctx.strokeStyle = 'rgba(122,219,154,0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(leftX + 20, panelY + 98); ctx.lineTo(leftX + leftW - 20, panelY + 98);
+  ctx.stroke();
+
+  // Stats
+  const stats = [
+    ['Waves Cleared',    `${CONFIG.waves.length} / ${CONFIG.waves.length}`],
+    ['Enemies Defeated', `${state.kills}`],
+    ['Coins Collected',  `${state.coins}`],
+    ['CO₂ Absorbed',     `${state.stats.co2.toFixed(0)} kg`],
+    ['Toxin Cleared',    `${state.stats.toxin.toFixed(0)} u`],
+    ['Quiz Score',       `${state.wrongAnswers.length === 0 && state.quizState === null
+                           ? 'Perfect!' : `${wrongs.length} miss${wrongs.length !== 1 ? 'es' : ''}`}`]
+  ];
+  ctx.font = '16px Georgia, serif';
+  stats.forEach(([label, value], i) => {
+    const sy = panelY + 128 + i * 38;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#7aba8a';
+    ctx.fillText(label, leftX + 24, sy);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#e8ffee';
+    ctx.fillText(value, leftX + leftW - 24, sy);
+  });
+
+  // Play Again button
+  const btnX = leftX + leftW / 2 - 90, btnY = panelY + panelH - 70;
+  ctx.beginPath();
+  ctx.roundRect(btnX, btnY, 180, 48, 10);
   ctx.fillStyle = '#1c8c4d';
-  ctx.fillRect(500, 456, 200, 54);
-  ctx.strokeStyle = '#d1ffdc';
-  ctx.strokeRect(500, 456, 200, 54);
+  ctx.fill();
+  ctx.strokeStyle = '#b0ffd0';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 22px sans-serif';
-  ctx.fillText('Play Again', 600, 490);
+  ctx.font = 'bold 20px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Play Again', leftX + leftW / 2, btnY + 31);
+  // Store button rect for click detection
+  state._victoryBtnRect = { x: btnX, y: btnY, w: 180, h: 48 };
+
+  // ── Right panel: eco knowledge review ────────────────────────────────────
+  if (!hasWrongs) { ctx.textAlign = 'left'; return; }
+
+  ctx.fillStyle = 'rgba(4, 10, 6, 0.82)';
+  ctx.beginPath();
+  ctx.roundRect(rightX, panelY, rightW, panelH, 14);
+  ctx.fill();
+  ctx.strokeStyle = '#e8a050';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Header
+  ctx.beginPath();
+  ctx.roundRect(rightX, panelY, rightW, 46, [14, 14, 0, 0]);
+  ctx.fillStyle = 'rgba(80,42,10,0.9)';
+  ctx.fill();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd090';
+  ctx.font = 'bold 17px Georgia, serif';
+  ctx.fillText('📚  Eco Knowledge Review  — Questions You Missed', rightX + rightW / 2, panelY + 30);
+
+  // Divider
+  ctx.strokeStyle = 'rgba(232,160,80,0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(rightX + 16, panelY + 48); ctx.lineTo(rightX + rightW - 16, panelY + 48);
+  ctx.stroke();
+
+  // Each wrong answer
+  const maxShow = Math.min(wrongs.length, 4); // cap at 4 to fit panel
+  const itemH = (panelH - 60) / maxShow;
+
+  wrongs.slice(0, maxShow).forEach((w, i) => {
+    const iy = panelY + 56 + i * itemH;
+    const lx = rightX + 20;
+    const maxTw = rightW - 40;
+
+    // Question
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f0e8d0';
+    ctx.font = `bold 14px Georgia, serif`;
+    wrapTextLeft(ctx, `Q: ${w.text}`, lx, iy, maxTw, 18);
+
+    // Correct answer highlight
+    ctx.fillStyle = '#7ef09a';
+    ctx.font = `bold 14px Georgia, serif`;
+    const ansY = iy + 36;
+    ctx.fillText(`✓  ${w.correctOption}`, lx, ansY);
+
+    // Explanation
+    ctx.fillStyle = '#96bea0';
+    ctx.font = `13px Georgia, serif`;
+    wrapTextLeft(ctx, w.explanation, lx, ansY + 18, maxTw, 16);
+
+    // Separator
+    if (i < maxShow - 1) {
+      ctx.strokeStyle = 'rgba(232,160,80,0.2)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(rightX + 16, iy + itemH - 4); ctx.lineTo(rightX + rightW - 16, iy + itemH - 4);
+      ctx.stroke();
+    }
+  });
+
+  // If more wrongs than shown
+  if (wrongs.length > maxShow) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#8a7050';
+    ctx.font = `13px Georgia, serif`;
+    ctx.fillText(`+ ${wrongs.length - maxShow} more missed — keep exploring eco topics!`, rightX + rightW / 2, panelY + panelH - 12);
+  }
+
   ctx.textAlign = 'left';
 }
 
@@ -1794,18 +3878,25 @@ function drawPlaying() {
   ctx.save();
   ctx.translate(shakeX, shakeY);
   drawBackground();
+  drawSmokeParticles();
   drawTrees();
   drawCore();
+  drawSprites();
   drawProjectiles();
   drawEnemies();
   drawHero();
+  drawTwisters();
+  drawUltPulses();
   drawSlashes();
-    drawParticles();
+  drawParticles();
   ctx.restore();
   drawHud();
+  drawCharmHud();
   drawMessages();
+  drawWaveOverlay();
   drawLoadoutPanel();
   drawShop();
+  drawQuizModal();
 }
 
 function gameLoop(ts) {
@@ -1911,6 +4002,20 @@ canvas.addEventListener('click', evt => {
     state.phase = 'playing';
     return;
   }
+  // Quiz click interception
+  if (state.phase === 'playing' && state.quizState && state.quizState.phase === 'asking') {
+    const rects = state.quizState._optRects;
+    if (rects) {
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+          handleQuizAnswer(i);
+          return;
+        }
+      }
+    }
+    return; // block other clicks while quiz is asking
+  }
   if (state.phase === 'gameover') {
     if (x > 500 && x < 700 && y > 428 && y < 482) {
       resetGame();
@@ -1919,9 +4024,16 @@ canvas.addEventListener('click', evt => {
     return;
   }
   if (state.phase === 'victory') {
-    if (state.victoryTimer > 3 && x > 500 && x < 700 && y > 456 && y < 510) {
-      resetGame();
-      state.phase = 'start';
+    if (state.victoryTimer > 3) {
+      const btn = state._victoryBtnRect;
+      const hit = btn
+        ? x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h
+        : x > 500 && x < 700 && y > 456 && y < 510; // fallback
+      if (hit) {
+        sound.stopVictoryMusic();
+        resetGame();
+        state.phase = 'start';
+      }
     }
     return;
   }
@@ -1950,6 +4062,7 @@ window.addEventListener('keydown', evt => {
   if (evt.code === 'KeyF' && state.phase === 'playing') heroPlant();
   if (evt.code === 'KeyJ' && state.phase === 'playing') heroAttack();
   if (evt.code === 'KeyK' && state.phase === 'playing') heroUltimate();
+  if (evt.code === 'KeyE' && state.phase === 'playing') activateFreezeField();
   if (evt.code === 'KeyQ' && state.phase === 'playing') {
     state.loadoutOpen = !state.loadoutOpen;
     if (state.loadoutOpen) state.shopOpen = false;
@@ -1959,6 +4072,11 @@ window.addEventListener('keydown', evt => {
     if (state.shopOpen) state.loadoutOpen = false;
   }
   if (evt.code === 'KeyM') sound.toggle();
+  if (evt.code === 'Enter' && state.phase === 'start') {
+    sound.unlock();
+    resetGame();
+    state.phase = 'playing';
+  }
 });
 
 window.addEventListener('keyup', evt => {
