@@ -212,8 +212,57 @@ const audioFiles = {
   gameover: 'assets/audio/stinger_gameover.wav'
 };
 
+// ─── Leaderboard (localStorage) ──────────────────────────────────────────────
+const STORAGE_KEY = 'gsg_leaderboard_v1';
+const NICKNAME_KEY = 'gsg_nickname';
+
+function lbLoad() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+  catch { return []; }
+}
+
+function lbSave(records) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(records)); } catch {}
+}
+
+function lbScore(r) {
+  // Quiz score weighted heavily to reflect eco-education theme
+  return (r.quizScore || 0) * 10 + (r.kills || 0);
+}
+
+function lbSubmit(nickname, kills, coins, quizScore, co2, toxin) {
+  const records = lbLoad();
+  const entry = { nickname, kills, coins, quizScore, co2, toxin, score: quizScore * 10 + kills, wins: 1, ts: Date.now() };
+  const existing = records.findIndex(r => r.nickname === nickname);
+  if (existing >= 0) {
+    if (entry.score > records[existing].score) records[existing] = entry;
+  } else {
+    records.push(entry);
+  }
+  records.sort((a, b) => b.score - a.score);
+  lbSave(records);
+  return records;
+}
+
+function lbGetNickname() {
+  return localStorage.getItem(NICKNAME_KEY) || '';
+}
+
+function lbSaveNickname(name) {
+  localStorage.setItem(NICKNAME_KEY, name);
+}
+
+// Nickname input state (for start screen)
+const nicknameInput = {
+  value: lbGetNickname(),
+  focused: false,
+  rect: { x: 110, y: 578, w: 240, h: 46 },
+  error: ''
+};
+
 const state = {
   phase: 'start',
+  nickname: lbGetNickname(),
   hero: null,
   core: { hp: CONFIG.core.maxHp },
   trees: [],
@@ -585,6 +634,7 @@ function finishQuiz() {
       });
     }
   }
+  state.quizTotalScore = (state.quizTotalScore || 0) + qs.score;
   qs.phase = 'done';
   qs.doneTimer = 4.0;
   const tiers = SCORE_TIERS_BY_WAVE[qs.configIndex] || SCORE_TIERS_BY_WAVE[0];
@@ -1216,6 +1266,7 @@ function spawnPollutionPatches() {
 }
 
 function resetGame() {
+  const savedNick = state.nickname; // preserve across resets
   state.hero = {
     x: CONFIG.hero.x,
     y: CONFIG.hero.y,
@@ -1269,6 +1320,9 @@ function resetGame() {
   state.wrongAnswers = [];
   state.quizPendingTimer = 0;
   state.quizPendingIndex = -1;
+  state.quizTotalScore = 0;
+  state.leaderboard = null;
+  state.nickname = savedNick || lbGetNickname();
   spawnPollutionPatches();
 }
 
@@ -2027,6 +2081,15 @@ function updateWave(dt) {
     state.phase = 'victory';
     state.victoryTimer = 0;
     state.cleanReveal = 0;
+    // Submit score and get updated leaderboard
+    state.leaderboard = lbSubmit(
+      state.nickname || 'Anonymous',
+      state.kills,
+      state.coins,
+      state.quizTotalScore || 0,
+      state.stats.co2,
+      state.stats.toxin
+    );
     sound.play('victory');
     setTimeout(() => sound.playVictoryMusic(), 1500);
   }
@@ -3649,31 +3712,77 @@ function drawStart() {
     ctx.fillText(c.desc, cx + 52, cy + 3);
   });
 
+  // ── Nickname input ──
+  const ni = nicknameInput;
+  const niR = ni.rect;
+  ctx.save();
+  ctx.shadowColor = ni.focused ? '#44ff88' : 'transparent';
+  ctx.shadowBlur = ni.focused ? 14 : 0;
+  ctx.fillStyle = 'rgba(6,16,10,0.88)';
+  ctx.beginPath(); ctx.roundRect(niR.x, niR.y, niR.w, niR.h, 10); ctx.fill();
+  ctx.strokeStyle = ni.focused ? `rgba(100,255,150,${0.7 + pulse * 0.3})` : 'rgba(80,160,100,0.5)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(niR.x, niR.y, niR.w, niR.h, 10); ctx.stroke();
+  ctx.restore();
+
+  // Label (centered above input)
+  ctx.textAlign = 'center';
+  ctx.fillStyle = `rgba(160,230,185,${0.55 + pulse * 0.2})`;
+  ctx.font = 'italic 14px Georgia, serif';
+  ctx.fillText("Hero's Name", niR.x + niR.w / 2, niR.y - 9);
+
+  // Input text or placeholder
+  const displayText = ni.value || '';
+  ctx.fillStyle = ni.value ? '#e8ffee' : 'rgba(140,200,160,0.4)';
+  ctx.font = 'bold 18px Georgia, serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(ni.value || 'Enter name…', niR.x + 12, niR.y + 30);
+
+  // Cursor blink
+  if (ni.focused) {
+    const tw = ctx.measureText(displayText).width;
+    const cursorOn = Math.floor(performance.now() / 530) % 2 === 0;
+    if (cursorOn) {
+      ctx.fillStyle = '#7eff9a';
+      ctx.fillRect(niR.x + 12 + tw + 2, niR.y + 10, 2, 24);
+    }
+  }
+
+  // Error message (below input, centered on hero area)
+  if (ni.error) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff8080';
+    ctx.font = '13px Georgia, serif';
+    ctx.fillText(ni.error, niR.x + niR.w / 2, niR.y + niR.h + 16);
+  }
+
   // ── 开始按钮 ──
   const btnW = 220, btnH = 52, btnX = 600 - btnW / 2, btnY = 490;
   const btnR = btnH / 2;
+  const canStart = ni.value.trim().length > 0;
   ctx.save();
-  ctx.shadowColor = '#44ff88';
-  ctx.shadowBlur = 22 + pulse * 18;
+  ctx.shadowColor = canStart ? '#44ff88' : 'transparent';
+  ctx.shadowBlur = canStart ? 22 + pulse * 18 : 0;
   const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
-  btnGrad.addColorStop(0, `rgba(30,160,80,${0.92 + pulse * 0.08})`);
-  btnGrad.addColorStop(1, `rgba(16,100,50,${0.88 + pulse * 0.08})`);
+  btnGrad.addColorStop(0, canStart ? `rgba(30,160,80,${0.92 + pulse * 0.08})` : 'rgba(40,60,44,0.7)');
+  btnGrad.addColorStop(1, canStart ? `rgba(16,100,50,${0.88 + pulse * 0.08})` : 'rgba(24,40,28,0.7)');
   ctx.fillStyle = btnGrad;
   ctx.beginPath(); ctx.roundRect(btnX, btnY, btnW, btnH, btnR); ctx.fill();
-  ctx.strokeStyle = `rgba(140,255,180,${0.6 + pulse * 0.4})`;
+  ctx.strokeStyle = canStart ? `rgba(140,255,180,${0.6 + pulse * 0.4})` : 'rgba(60,90,65,0.4)';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.roundRect(btnX, btnY, btnW, btnH, btnR); ctx.stroke();
   ctx.restore();
-
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = canStart ? '#ffffff' : 'rgba(160,180,165,0.5)';
   ctx.font = 'bold 22px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('▶  Start Mission', 600, btnY + 33);
+  // store for click detection
+  nicknameInput._btnRect = { x: btnX, y: btnY, w: btnW, h: btnH };
 
   // 底部提示
   ctx.fillStyle = `rgba(160,210,175,${0.38 + pulse * 0.12})`;
   ctx.font = '13px sans-serif';
-  ctx.fillText('Click anywhere or press Enter to begin', 600, btnY + btnH + 22);
+  ctx.fillText('Click the field to type · Press Enter to start', 600, btnY + btnH + 20);
 
   // 署名
   ctx.fillStyle = 'rgba(180,225,200,0.65)';
@@ -3735,147 +3844,164 @@ function drawVictory(dt) {
 
   const wrongs = state.wrongAnswers;
   const hasWrongs = wrongs.length > 0;
+  const lb = state.leaderboard || lbLoad();
 
-  // Layout: left panel = stats, right panel = eco review (if any wrongs)
-  const panelY = 80, panelH = 490;
-  const leftX = hasWrongs ? 30  : 330;
-  const leftW = hasWrongs ? 330 : 540;
-  const rightX = 380, rightW = 790;
+  // Layout: left column (Stats + Leaderboard stacked), right column (Eco Review full height)
+  const totalH = 560;
+  const panelY = 62;
+  const gap = 10;
+  const leftW = 360;
+  const rightW = CONFIG.width - 40 - leftW - gap;
+  const leftX = 20;
+  const rightX = leftX + leftW + gap;
 
-  // ── Left panel: game stats ────────────────────────────────────────────────
-  ctx.fillStyle = 'rgba(4, 10, 6, 0.82)';
-  ctx.beginPath();
-  ctx.roundRect(leftX, panelY, leftW, panelH, 14);
-  ctx.fill();
-  ctx.strokeStyle = '#7adb9a';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+  // Left top: Stats panel
+  const statsH = 248;
+  const statsY = panelY;
+  // Left bottom: Leaderboard panel
+  const lbH = totalH - statsH - gap;
+  const lbY = panelY + statsH + gap;
 
-  // Victory title
+  function panelAt(x, y, w, h, borderColor) {
+    ctx.fillStyle = 'rgba(4,10,6,0.86)';
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
+    ctx.strokeStyle = borderColor; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
+  }
+  function panelHeaderAt(x, y, w, bgColor, label, labelColor) {
+    ctx.beginPath(); ctx.roundRect(x, y, w, 40, [12, 12, 0, 0]);
+    ctx.fillStyle = bgColor; ctx.fill();
+    ctx.fillStyle = labelColor;
+    ctx.font = 'bold 14px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x + w / 2, y + 26);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + 12, y + 40); ctx.lineTo(x + w - 12, y + 40); ctx.stroke();
+  }
+
+  // ── Panel: Stats ─────────────────────────────────────────────────────────
+  panelAt(leftX, statsY, leftW, statsH, '#7adb9a');
+  panelHeaderAt(leftX, statsY, leftW, 'rgba(18,58,30,0.95)', '🏆  Your Result', '#9effc0');
+
+  const totalScore = (state.quizTotalScore || 0) * 10 + state.kills;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#d8ffb0';
-  ctx.font = 'bold 44px Georgia, serif';
-  ctx.fillText('Victory!', leftX + leftW / 2, panelY + 58);
+  ctx.font = 'bold 24px Georgia, serif';
+  ctx.fillText('Victory!', leftX + leftW / 2, statsY + 70);
+  ctx.fillStyle = '#7adb9a';
+  ctx.font = '13px Georgia, serif';
+  ctx.fillText(state.nickname || '', leftX + leftW / 2, statsY + 88);
+  ctx.fillStyle = '#ffe066';
+  ctx.font = 'bold 20px Georgia, serif';
+  ctx.fillText(`Score: ${totalScore}`, leftX + leftW / 2, statsY + 114);
 
-  ctx.fillStyle = '#a8ddb5';
-  ctx.font = '14px Georgia, serif';
-  ctx.fillText('The factory is reclaimed.', leftX + leftW / 2, panelY + 82);
+  ctx.strokeStyle = 'rgba(122,219,154,0.2)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(leftX + 12, statsY + 124); ctx.lineTo(leftX + leftW - 12, statsY + 124); ctx.stroke();
 
-  // Divider
-  ctx.strokeStyle = 'rgba(122,219,154,0.3)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(leftX + 20, panelY + 98); ctx.lineTo(leftX + leftW - 20, panelY + 98);
-  ctx.stroke();
-
-  // Stats
-  const stats = [
-    ['Waves Cleared',    `${CONFIG.waves.length} / ${CONFIG.waves.length}`],
+  const statsRows = [
     ['Enemies Defeated', `${state.kills}`],
-    ['Coins Collected',  `${state.coins}`],
+    ['Quiz Score',       `${state.quizTotalScore || 0} pts`],
     ['CO₂ Absorbed',     `${state.stats.co2.toFixed(0)} kg`],
     ['Toxin Cleared',    `${state.stats.toxin.toFixed(0)} u`],
-    ['Quiz Score',       `${state.wrongAnswers.length === 0 && state.quizState === null
-                           ? 'Perfect!' : `${wrongs.length} miss${wrongs.length !== 1 ? 'es' : ''}`}`]
   ];
-  ctx.font = '16px Georgia, serif';
-  stats.forEach(([label, value], i) => {
-    const sy = panelY + 128 + i * 38;
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#7aba8a';
-    ctx.fillText(label, leftX + 24, sy);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#e8ffee';
-    ctx.fillText(value, leftX + leftW - 24, sy);
+  ctx.font = '13px Georgia, serif';
+  statsRows.forEach(([label, value], i) => {
+    const sy = statsY + 142 + i * 26;
+    ctx.textAlign = 'left';  ctx.fillStyle = '#6aaa7a'; ctx.fillText(label, leftX + 14, sy);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#e8ffee'; ctx.fillText(value, leftX + leftW - 14, sy);
   });
 
-  // Play Again button
-  const btnX = leftX + leftW / 2 - 90, btnY = panelY + panelH - 70;
-  ctx.beginPath();
-  ctx.roundRect(btnX, btnY, 180, 48, 10);
-  ctx.fillStyle = '#1c8c4d';
-  ctx.fill();
-  ctx.strokeStyle = '#b0ffd0';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 20px Georgia, serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('Play Again', leftX + leftW / 2, btnY + 31);
-  // Store button rect for click detection
-  state._victoryBtnRect = { x: btnX, y: btnY, w: 180, h: 48 };
+  // Play Again button — top center above all panels
+  const btnW2 = 200, btnH2 = 36, btnX2 = CONFIG.width / 2 - btnW2 / 2, btnY2 = 18;
+  ctx.beginPath(); ctx.roundRect(btnX2, btnY2, btnW2, btnH2, 9);
+  ctx.fillStyle = '#1c8c4d'; ctx.fill();
+  ctx.strokeStyle = '#b0ffd0'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 15px Georgia, serif'; ctx.textAlign = 'center';
+  ctx.fillText('▶  Play Again', CONFIG.width / 2, btnY2 + 23);
+  state._victoryBtnRect = { x: btnX2, y: btnY2, w: btnW2, h: btnH2 };
 
-  // ── Right panel: eco knowledge review ────────────────────────────────────
-  if (!hasWrongs) { ctx.textAlign = 'left'; return; }
+  // ── Panel: Leaderboard ───────────────────────────────────────────────────
+  panelAt(leftX, lbY, leftW, lbH, '#ffe066');
+  panelHeaderAt(leftX, lbY, leftW, 'rgba(60,48,10,0.95)', '🌍  Leaderboard  —  All Players', '#ffe066');
 
-  ctx.fillStyle = 'rgba(4, 10, 6, 0.82)';
-  ctx.beginPath();
-  ctx.roundRect(rightX, panelY, rightW, panelH, 14);
-  ctx.fill();
-  ctx.strokeStyle = '#e8a050';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+  const lbRows = lb.slice(0, 8);
+  const rowH = (lbH - 52) / Math.max(lbRows.length, 1);
+  const currentNick = state.nickname || '';
 
-  // Header
-  ctx.beginPath();
-  ctx.roundRect(rightX, panelY, rightW, 46, [14, 14, 0, 0]);
-  ctx.fillStyle = 'rgba(80,42,10,0.9)';
-  ctx.fill();
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#ffd090';
-  ctx.font = 'bold 17px Georgia, serif';
-  ctx.fillText('📚  Eco Knowledge Review  — Questions You Missed', rightX + rightW / 2, panelY + 30);
+  lbRows.forEach((r, i) => {
+    const ry = lbY + 46 + i * rowH;
+    const isMe = r.nickname === currentNick;
 
-  // Divider
-  ctx.strokeStyle = 'rgba(232,160,80,0.3)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(rightX + 16, panelY + 48); ctx.lineTo(rightX + rightW - 16, panelY + 48);
-  ctx.stroke();
+    if (isMe) {
+      ctx.fillStyle = 'rgba(255,220,50,0.12)';
+      ctx.beginPath(); ctx.roundRect(leftX + 6, ry + 2, leftW - 12, rowH - 4, 6); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,220,50,0.4)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(leftX + 6, ry + 2, leftW - 12, rowH - 4, 6); ctx.stroke();
+    }
 
-  // Each wrong answer
-  const maxShow = Math.min(wrongs.length, 4); // cap at 4 to fit panel
-  const itemH = (panelH - 60) / maxShow;
-
-  wrongs.slice(0, maxShow).forEach((w, i) => {
-    const iy = panelY + 56 + i * itemH;
-    const lx = rightX + 20;
-    const maxTw = rightW - 40;
-
-    // Question
+    const cy = ry + rowH / 2 + 6;
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+    ctx.font = i < 3 ? '18px serif' : 'bold 13px Georgia, serif';
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#f0e8d0';
-    ctx.font = `bold 14px Georgia, serif`;
-    wrapTextLeft(ctx, `Q: ${w.text}`, lx, iy, maxTw, 18);
+    ctx.fillStyle = i < 3 ? '#fff' : '#8a9e8e';
+    ctx.fillText(medal, leftX + 14, cy);
 
-    // Correct answer highlight
-    ctx.fillStyle = '#7ef09a';
-    ctx.font = `bold 14px Georgia, serif`;
-    const ansY = iy + 36;
-    ctx.fillText(`✓  ${w.correctOption}`, lx, ansY);
+    ctx.font = isMe ? 'bold 14px Georgia, serif' : '13px Georgia, serif';
+    ctx.fillStyle = isMe ? '#ffe066' : '#d8ffdc';
+    ctx.fillText(r.nickname, leftX + 46, cy);
 
-    // Explanation
-    ctx.fillStyle = '#96bea0';
-    ctx.font = `13px Georgia, serif`;
-    wrapTextLeft(ctx, w.explanation, lx, ansY + 18, maxTw, 16);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = isMe ? '#ffe066' : '#a8c8a8';
+    ctx.font = 'bold 13px Georgia, serif';
+    ctx.fillText(`${r.score}`, leftX + leftW - 14, cy);
 
-    // Separator
-    if (i < maxShow - 1) {
-      ctx.strokeStyle = 'rgba(232,160,80,0.2)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(rightX + 16, iy + itemH - 4); ctx.lineTo(rightX + rightW - 16, iy + itemH - 4);
-      ctx.stroke();
+    ctx.fillStyle = '#5a7a5e';
+    ctx.font = '11px Georgia, serif';
+    ctx.fillText(`quiz:${r.quizScore}  kills:${r.kills}`, leftX + leftW - 14, cy + 14);
+
+    if (i < lbRows.length - 1) {
+      ctx.strokeStyle = 'rgba(255,220,50,0.08)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(leftX + 12, ry + rowH); ctx.lineTo(leftX + leftW - 12, ry + rowH); ctx.stroke();
     }
   });
 
-  // If more wrongs than shown
-  if (wrongs.length > maxShow) {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#8a7050';
-    ctx.font = `13px Georgia, serif`;
-    ctx.fillText(`+ ${wrongs.length - maxShow} more missed — keep exploring eco topics!`, rightX + rightW / 2, panelY + panelH - 12);
+  if (lb.length === 0) {
+    ctx.textAlign = 'center'; ctx.fillStyle = '#5a7a5e'; ctx.font = '14px Georgia, serif';
+    ctx.fillText('No records yet', leftX + leftW / 2, lbY + lbH / 2);
   }
+
+  // ── Panel: Eco Knowledge Review (full height, right side) ─────────────────
+  if (!hasWrongs) { ctx.textAlign = 'left'; return; }
+
+  panelAt(rightX, panelY, rightW, totalH, '#e8a050');
+  panelHeaderAt(rightX, panelY, rightW, 'rgba(80,42,10,0.95)', '📚  Eco Review — Wrong Answers', '#ffd090');
+
+  const maxShow = wrongs.length; // show all wrongs — we have space now
+  const itemH = (totalH - 52) / Math.max(maxShow, 1);
+
+  wrongs.forEach((w, i) => {
+    const iy = panelY + 52 + i * itemH;
+    const lx = rightX + 16;
+    const maxTw = rightW - 32;
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f0e8d0';
+    ctx.font = 'bold 14px Georgia, serif';
+    wrapTextLeft(ctx, `Q: ${w.text}`, lx, iy + 16, maxTw, 18);
+
+    ctx.fillStyle = '#7ef09a';
+    ctx.font = 'bold 13px Georgia, serif';
+    ctx.fillText(`✓  ${w.correctOption}`, lx, iy + 54);
+
+    ctx.fillStyle = '#88b090';
+    ctx.font = '13px Georgia, serif';
+    wrapTextLeft(ctx, w.explanation, lx, iy + 72, maxTw, 16);
+
+    if (i < wrongs.length - 1) {
+      ctx.strokeStyle = 'rgba(232,160,80,0.22)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(rightX + 12, iy + itemH - 3); ctx.lineTo(rightX + rightW - 12, iy + itemH - 3); ctx.stroke();
+    }
+  });
 
   ctx.textAlign = 'left';
 }
@@ -4003,12 +4129,35 @@ function handleLoadoutClick(mx, my) {
   return false;
 }
 
+function tryStartGame() {
+  const name = nicknameInput.value.trim();
+  if (!name) { nicknameInput.error = 'Please enter a nickname to continue!'; return; }
+  nicknameInput.error = '';
+  lbSaveNickname(name);
+  state.nickname = name;
+  resetGame();
+  state.nickname = name; // resetGame doesn't overwrite nickname
+  state.phase = 'playing';
+}
+
 canvas.addEventListener('click', evt => {
   sound.unlock();
   const { x, y } = clickPoint(evt);
   if (state.phase === 'start') {
-    resetGame();
-    state.phase = 'playing';
+    const ni = nicknameInput;
+    const r = ni.rect;
+    // Click on input field
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+      ni.focused = true;
+      return;
+    }
+    ni.focused = false;
+    // Click on Start button
+    const btn = ni._btnRect;
+    if (btn && x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+      tryStartGame();
+      return;
+    }
     return;
   }
   // Quiz click interception
@@ -4081,10 +4230,22 @@ window.addEventListener('keydown', evt => {
     if (state.shopOpen) state.loadoutOpen = false;
   }
   if (evt.code === 'KeyM') sound.toggle();
-  if (evt.code === 'Enter' && state.phase === 'start') {
-    sound.unlock();
-    resetGame();
-    state.phase = 'playing';
+  if (state.phase === 'start') {
+    const ni = nicknameInput;
+    if (evt.code === 'Enter') {
+      sound.unlock();
+      tryStartGame();
+      return;
+    }
+    if (ni.focused) {
+      evt.preventDefault();
+      if (evt.code === 'Backspace') {
+        ni.value = ni.value.slice(0, -1);
+      } else if (evt.key.length === 1 && ni.value.length < 20) {
+        ni.value += evt.key;
+      }
+      ni.error = '';
+    }
   }
 });
 
