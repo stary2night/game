@@ -30,6 +30,7 @@
 
 <img id="mapBg" src="assets/images/map_background_concept_c_v1.png" style="display:none" alt="">
 <img id="factoryCleanBg" src="assets/images/factory_clean_v1.png" style="display:none" alt="">
+<img id="factoryCleanV2Bg" src="assets/images/factory_clean_v2.png" style="display:none" alt="">
 <img id="coreSprite" src="assets/images/core_pure.png" style="display:none" alt="">
 <img id="treeSprite" src="assets/images/tree_sanctuary.png" style="display:none" alt="">
 <img id="uiIconSheet" src="assets/images/ui_icons_sheet_v1.png" style="display:none" alt="">
@@ -150,6 +151,7 @@ const CONFIG = {
 const images = {
   map: document.getElementById('mapBg'),
   cleanFactory: document.getElementById('factoryCleanBg'),
+  cleanMap: document.getElementById('factoryCleanV2Bg'),
   core: document.getElementById('coreSprite'),
   tree: document.getElementById('treeSprite'),
   uiSheet: document.getElementById('uiIconSheet'),
@@ -2386,24 +2388,31 @@ function drawBackground() {
   }
 
   if (state.phase === 'victory') {
-    state.cleanReveal = clamp(state.victoryTimer / 3, 0, 1);
-    if (imageReady(images.cleanFactory)) {
-      const fx = 840;
-      const fw = 360 * state.cleanReveal;
-      if (fw > 0) {
+    state.cleanReveal = clamp(state.victoryTimer / 4, 0, 1);
+    if (imageReady(images.cleanMap)) {
+      // Sweep the full clean map from right to left across the entire canvas
+      const revealW = Math.round(CONFIG.width * state.cleanReveal);
+      const startX = CONFIG.width - revealW;
+      if (revealW > 0) {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(fx, 0, fw, CONFIG.height);
+        ctx.rect(startX, 0, revealW, CONFIG.height);
         ctx.clip();
-        ctx.drawImage(images.cleanFactory, 840, 0, 360, CONFIG.height);
+        ctx.drawImage(images.cleanMap, 0, 0, CONFIG.width, CONFIG.height);
         ctx.restore();
       }
+      // Sweep edge glow
+      if (state.cleanReveal < 1) {
+        ctx.fillStyle = 'rgba(200,255,180,0.55)';
+        ctx.fillRect(startX - 4, 0, 10, CONFIG.height);
+      }
+    } else {
+      // Fallback: green overlay sweep if image not ready
+      const revealW = Math.round(CONFIG.width * state.cleanReveal);
+      const startX = CONFIG.width - revealW;
+      ctx.fillStyle = 'rgba(100,200,80,0.25)';
+      ctx.fillRect(startX, 0, revealW, CONFIG.height);
     }
-    const sweepX = 840 + 360 * state.cleanReveal;
-    ctx.fillStyle = 'rgba(200,255,180,0.18)';
-    ctx.fillRect(840, 0, 360 * state.cleanReveal, CONFIG.height);
-    ctx.fillStyle = 'rgba(240,255,220,0.45)';
-    ctx.fillRect(sweepX - 6, 0, 10, CONFIG.height);
   }
 }
 
